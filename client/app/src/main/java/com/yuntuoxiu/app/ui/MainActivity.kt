@@ -246,16 +246,28 @@ class MainActivity : AppCompatActivity() {
             val token = File("/sdcard/MT2/apks/yuntuoxiu-dev/token.txt").exists()
 
             val ready = npatch && module && injector
-            tv.text = if (ready) {
-                "本地引擎：✅ 就绪（注入${if (token) " + 云端" else ""}）"
-            } else {
-                "本地引擎：⚠️ 缺 " + listOfNotNull(
+
+            // ⭐ v1.6.8 显示「内置 worker」真实状态（便于诊断）
+            val workerAlive = try {
+                com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()
+            } catch (_: Throwable) { false }
+            val hbInfo = try {
+                com.yuntuoxiu.app.worker.ContainerBridge.heartbeatInfo()
+            } catch (_: Throwable) { "读取失败" }
+
+            tv.text = when {
+                !ready -> "本地引擎：⚠️ 缺 " + listOfNotNull(
                     if (!npatch) "NPatch素材" else null,
                     if (!module) "脱壳模块" else null,
                     if (!injector) "注入器" else null
                 ).joinToString("/")
+                workerAlive -> "本地引擎：✅ 就绪（worker 在线${if (token) " + 云端" else ""}）"
+                else -> "本地引擎：⚠️ 就绪但 worker 离线\n  $hbInfo"
             }
-            badge?.setTextColor(if (ready) 0xFF3FB950.toInt() else 0xFFF0883E.toInt())
+            badge?.setTextColor(
+                if (ready && workerAlive) 0xFF3FB950.toInt()
+                else if (ready) 0xFFF0883E.toInt()
+                else 0xFFF85149.toInt())
         } catch (t: Throwable) {
             LogStore.w(TAG, "刷新引擎状态失败: ${t.message}")
         }
@@ -1155,15 +1167,47 @@ class MainActivity : AppCompatActivity() {
         styleDialogWindow(dialog)
     }
 
+    /**
+     * 提交「已安装应用」为新任务（v1.6.8 修复）
+     *
+     * ⚠️ 关键：APP **无法直接读** /data/app/<pkg>/base.apk（其他 App 私有）
+     *    → 必须用 **Shizuku** 复制到可读位置
+     */
     private fun submitInstalledApp(label: String, pkg: String, srcDir: String) {
         lifecycleScope.launch {
+            Toast.makeText(this@MainActivity, "正在提取 $label…", Toast.LENGTH_SHORT).show()
+
             val r = withContext(Dispatchers.IO) {
                 try {
-                    val src = File(srcDir)
-                    if (!src.exists()) return@withContext SubmitResult.Failure("源 APK 不存在")
-                    val tmp = File(cacheDir, "installed_${pkg}.apk")
-                    src.copyTo(tmp, overwrite = true)
-                    TaskRepository.submitTask(this@MainActivity, tmp, allowAutoDegrade = true)
+                    // ① 目标：/sdcard/MT2/apks/unpackcloud/uploads/installed_<pkg>.apk
+                    val upDir = File(YunTuoXiuApp.UPLOADS_ROOT)
+                    upDir.mkdirs()
+                    val dest = File(upDir, "installed_${pkg}.apk")
+
+                    // ② 用 Shizuku 复制（shell 能读 /data/app/）
+                    val cmd = "cp -f '$srcDir' '${dest.absolutePath}' 2>&1 && " +
+                              "ls -la '${dest.absolutePath}'"
+                    val res = com.yuntuoxiu.app.shizuku.ShizukuShellExecutor.exec(cmd)
+                    val code = res.getInt("code")
+                    val out = res.getString("stdout") ?: ""
+
+                    if (code != 0 || !dest.exists() || dest.length() < 1024) {
+                        // 退回：尝试直接读（APP 有 MANAGE_EXTERNAL_STORAGE 时可能可行）
+                        try {
+                            val src = File(srcDir)
+                            if (src.exists() && src.canRead()) {
+                                src.copyTo(dest, overwrite = true)
+                            }
+                        } catch (_: Throwable) {}
+                    }
+
+                    if (!dest.exists() || dest.length() < 1024) {
+                        return@withContext SubmitResult.Failure(
+                            "无法读取应用 APK（需 Shizuku 授权）\n$out")
+                    }
+
+                    // ③ 提交任务（源用 dest）
+                    TaskRepository.submitTask(this@MainActivity, dest, allowAutoDegrade = true)
                 } catch (t: Throwable) {
                     SubmitResult.Failure("提交失败: ${t.message}")
                 }
@@ -1171,12 +1215,12 @@ class MainActivity : AppCompatActivity() {
             when (r) {
                 is SubmitResult.Success -> {
                     LogStore.i(TAG, "已提交: $label ($pkg)")
-                    Toast.makeText(this@MainActivity, "已提交：$label", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "✅ 已提交：$label", Toast.LENGTH_LONG).show()
                     refreshTasks()
                 }
                 is SubmitResult.Failure -> {
                     LogStore.e(TAG, "提交失败: ${r.reason}")
-                    Toast.makeText(this@MainActivity, "提交失败: ${r.reason}", Toast.LENGTH_LONG).show()
+                    showResultDialog("提交失败", r.reason)
                 }
             }
         }
@@ -1485,25 +1529,45 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * ⭐ 统一弹窗窗口样式：
-     *   · 深色圆角背景（bg_dialog）
-     *   · 底层轻微虚化（dimAmount 0.55）
-     *   · 阴影层次（elevation）
+     * ⭐ 统一弹窗窗口样式（v1.6.8：去多余方框，衔接自然）
      */
     private fun styleDialogWindow(dlg: AlertDialog) {
         try {
             val w = dlg.window ?: return
             // 深色圆角背景
             w.setBackgroundDrawableResource(R.drawable.bg_dialog)
-            // 底层虚化（0..1，越大越暗）
+            // 去掉系统「浮动窗口」的额外内边距/装饰
+            w.setDimAmount(0.60f)
             w.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            val lp = w.attributes
-            lp.dimAmount = 0.60f
-            w.attributes = lp
+            // ⭐ 内容铺满（避免标题/内容区之间多余留白）
+            w.setLayout(
+                minOf((resources.displayMetrics.widthPixels * 0.92).toInt(), dp(480)),
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
             // 阴影层次
             if (android.os.Build.VERSION.SDK_INT >= 21) {
-                w.setElevation(dp(8).toFloat())
+                w.setElevation(dp(6).toFloat())
             }
+            // ⭐ 去掉标题与内容之间的分隔线（衔接自然）
+            try {
+                val titleId = resources.getIdentifier("alertTitle", "id", "android")
+                if (titleId != 0) {
+                    val tv = dlg.findViewById<TextView>(titleId)
+                    tv?.setPadding(dp(20), dp(16), dp(20), dp(8))
+                    tv?.setTextColor(0xFFE6EDF3.toInt())
+                    tv?.textSize = 15f
+                }
+            } catch (_: Throwable) {}
+            // 内容区 padding（若为自定义 view 用 setView 的）
+            val contentId = android.R.id.message
+            try {
+                if (contentId != 0) {
+                    dlg.findViewById<TextView>(contentId)?.apply {
+                        setPadding(dp(20), dp(4), dp(20), dp(8))
+                        setTextColor(0xFFC9D1D9.toInt())
+                        textSize = 13f
+                    }
+                }
+            } catch (_: Throwable) {}
         } catch (t: Throwable) {
             LogStore.w(TAG, "弹窗样式设置失败: ${t.message}")
         }

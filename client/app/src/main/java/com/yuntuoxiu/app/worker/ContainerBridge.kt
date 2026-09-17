@@ -3,6 +3,7 @@ package com.yuntuoxiu.app.worker
 import android.util.Log
 import com.yuntuoxiu.app.LogStore
 import com.yuntuoxiu.app.YunTuoXiuApp
+import com.yuntuoxiu.app.shizuku.ShizukuShellExecutor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -31,17 +32,72 @@ object ContainerBridge {
     private val CMD_DIR = File(YunTuoXiuApp.CLOUD_ROOT, "cmd")
     private val HB = File(YunTuoXiuApp.CLOUD_ROOT, "logs/termux_heartbeat.json")
 
-    /** worker 心跳是否新鲜（默认 30s 内算活） */
+    /**
+     * worker 心跳是否新鲜（v1.6.8：优先用 Shizuku 读，避开 /sdcard 权限问题）
+     */
     fun isWorkerAlive(maxAgeMs: Long = 30_000): Boolean {
         return try {
-            if (!HB.exists()) return false
-            val age = System.currentTimeMillis() - HB.lastModified()
-            val j = JSONObject(HB.readText())
+            // ① 先试直接读（有 MANAGE_EXTERNAL_STORAGE 时可行）
+            if (HB.exists()) {
+                val age = System.currentTimeMillis() - HB.lastModified()
+                val j = JSONObject(HB.readText())
+                val state = j.optString("state", "")
+                if (age < maxAgeMs && state != "stopped") return true
+            }
+            // ② 退回：用 Shizuku 读（shell 一定能读）
+            val r = ShizukuShellExecutor.exec(
+                "cat '$HB' 2>/dev/null")
+            val out = (r.getString("stdout") ?: "").trim()
+            if (out.isEmpty()) return false
+            val j = JSONObject(out)
+            // Shizuku 读到内容 → 用文件 mtime 判新鲜度（shell stat）
+            val r2 = ShizukuShellExecutor.exec(
+                "echo $(($(date +%s%3N) - $(stat -c %Y '$HB' 2>/dev/null || echo 0) * 1000))")
+            val ageMs = (r2.getString("stdout") ?: "999999").trim().toLongOrNull() ?: 999999L
             val state = j.optString("state", "")
-            age < maxAgeMs && state != "stopped"
+            ageMs < maxAgeMs && state != "stopped"
         } catch (t: Throwable) {
             false
         }
+    }
+
+    /**
+     * ⭐ v1.6.8 确保 worker 在跑。若不在，尝试用 Shizuku 拉起。
+     *
+     * 原理：Shizuku shell 虽是 /system/bin/sh（无 java/python），
+     *      但**容器**里的 bash 能启动 worker。
+     *      而容器进程需从「容器内部」启动 → 用 Operit 的 API 或
+     *      **不行**（Shizuku 无法启动容器进程）。
+     *
+     * 所以真实可行的是：
+     *   ① 若 worker 心跳新鲜 → 直接返回 true
+     *   ② 否则 → 提示用户在 Operit 终端执行 ytx.sh start
+     *   （未来：APP 与 Operit 深度集成后可自动拉起）
+     */
+    suspend fun ensureWorker(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        if (isWorkerAlive()) return@withContext true to "worker 在线"
+
+        // 尝试通过「命令桥」让已有 worker 重启（若它只是心跳停了但进程还在）
+        try {
+            val name = "app_ensure_" + System.currentTimeMillis()
+            val cmdFile = File(CMD_DIR, "$name.cmd")
+            CMD_DIR.mkdirs()
+            cmdFile.writeText("ping\n")
+            // 等 3s 看是否有响应
+            val doneFile = File(CMD_DIR, "$name.done")
+            var waited = 0L
+            while (waited < 3000) {
+                if (doneFile.exists()) {
+                    cmdFile.delete(); doneFile.delete()
+                    return@withContext true to "worker 响应 ping（进程在，心跳可能过期）"
+                }
+                Thread.sleep(200); waited += 200
+            }
+            cmdFile.delete()
+        } catch (_: Throwable) {}
+
+        false to ("worker 离线。请在 Operit 终端执行：\n" +
+                  "  bash /sdcard/MT2/apks/ytx.sh start")
     }
 
     /** 读心跳详情（供 UI 显示） */
