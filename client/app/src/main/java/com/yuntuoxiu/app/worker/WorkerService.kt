@@ -5,7 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -62,12 +61,12 @@ class WorkerService : Service() {
     /** 兼容各 Android 版本的前台服务启动 */
     private fun startForegroundCompat() {
         val notif = buildNotificationSafe()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 10+ 需显式类型；Manifest 已声明 dataSync
-            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIF_ID, notif)
-        }
+        // ⚠️ 关键修复：Android 14 (targetSdk 34) 下，如果传了 foregroundServiceType
+        //    参数，系统会校验对应的 FOREGROUND_SERVICE_<TYPE> 权限；
+        //    Manifest 未声明该权限时会抛 SecurityException 崩溃。
+        //    这里统一用 2 参版本（不指定 type），由 Manifest 的 service 声明决定，
+        //    避免权限校验导致的崩溃。
+        startForeground(NOTIF_ID, notif)
     }
 
     /** 构建通知；任何失败都回退到最简通知 */
