@@ -183,10 +183,14 @@ object TaskRepository {
      */
     fun findLatestTaskId(): String? {
         return try {
-            val dirs = File(tasksRoot).listFiles { f ->
-                f.isDirectory && f.name.startsWith("t_")
-            } ?: return null
-            dirs.maxByOrNull { it.name }?.name
+            val all = File(tasksRoot).listFiles() ?: return null
+            var best: File? = null
+            for (f in all) {
+                if (!f.isDirectory) continue
+                if (!f.name.startsWith("t_")) continue
+                if (best == null || f.name > best.name) best = f
+            }
+            best?.name
         } catch (t: Throwable) {
             null
         }
