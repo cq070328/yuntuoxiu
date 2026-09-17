@@ -47,9 +47,9 @@ object AutoWatcher {
         try {
             if (!uploadsRoot.exists()) uploadsRoot.mkdirs()
             // 用 list() 避免 listFiles() 重载歧义
-            val allNames = uploadsRoot.list() ?: emptyArray()
-            val reqNames = allNames.filter {
-                it.startsWith("create_") && it.endsWith(".req.json")
+            val allFiles: Array<File>? = uploadsRoot.listFiles()
+            val reqNames = (allFiles ?: emptyArray()).filter {
+                it.isFile && it.name.startsWith("create_") && it.name.endsWith(".req.json")
             }
 
             for (reqName in reqNames) {
@@ -216,7 +216,8 @@ object AutoWatcher {
         val apkName = File(apkPath).name
         val terminal = setOf("SUCCESS", "FAILED", "CANCELLED", "PRE_CHECK_FAILED")
         return try {
-            val dirs = tasksRoot.list() ?: return false
+            val dirs: Array<File>? = tasksRoot.listFiles()
+            if (dirs == null) return false
             dirs.any { dn ->
                 val d = File(tasksRoot, dn)
                 if (!d.isDirectory) return@any false
@@ -263,8 +264,9 @@ object AutoWatcher {
     /** 待处理请求数（供 UI 显示） */
     fun pendingCount(): Int {
         return try {
-            val names = uploadsRoot.list() ?: return 0
-            names.count { it.startsWith("create_") && it.endsWith(".req.json") }
+            val files: Array<File>? = uploadsRoot.listFiles()
+            if (files == null) return 0
+            files.count { it.isFile && it.name.startsWith("create_") && it.name.endsWith(".req.json") }
         } catch (t: Throwable) { 0 }
     }
 }
