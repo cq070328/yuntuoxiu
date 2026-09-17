@@ -111,6 +111,14 @@ object AutoWatcher {
         // 3) 写 task_meta.json（对齐后端 TaskMeta 格式）
         val now = System.currentTimeMillis() / 1000
         val sha = try { sha256(origApk) } catch (t: Throwable) { "" }
+
+        // 【新增】APP 内置壳识别（秒级，不依赖容器）
+        val verdict = try {
+            ShellDetect.detect(origApk.absolutePath)
+        } catch (t: Throwable) {
+            LogStore.e(TAG, "壳识别失败: ${t.message}"); null
+        }
+
         val meta = mapOf(
             "task_id" to tid,
             "state" to "CREATED",
@@ -121,16 +129,19 @@ object AutoWatcher {
             "version_name" to "",
             "allow_auto_degrade" to req.allowAutoDegrade,
             "client_abi" to "arm64-v8a",
-            "shell_tag" to null,
+            "shell_tag" to verdict?.tag,           // 【新增】壳标签
+            "shell_confidence" to verdict?.confidence,
+            "shell_reasons" to (verdict?.reasons ?: emptyList<String>()),
             "fail_code" to null,
             "artifact_status" to null,
             "handler_trace" to emptyList<Any>(),
             "degrade_trace" to emptyList<Any>(),
-            "local_watcher" to true,          // 标记：APP 内部创建
+            "local_watcher" to true,
             "created_at" to now,
             "updated_at" to now
         )
         File(taskDir, "meta/task_meta.json").writeText(gson.toJson(meta))
+        LogStore.i(TAG, "壳识别结果: ${verdict?.tag} (${verdict?.confidence})")
 
         // 4) 下发 PRE_CHECK 指令（供 WorkerService 执行）
         emitPreCheck(taskDir, tid, req)
