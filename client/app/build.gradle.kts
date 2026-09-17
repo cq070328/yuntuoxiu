@@ -11,8 +11,8 @@ android {
         applicationId = "com.yuntuoxiu.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.5.0"
+        versionCode = 4
+        versionName = "1.5.3"
 
         ndk {
             // 客户端 ABI 固定 arm64-v8a（PRD 定稿）
