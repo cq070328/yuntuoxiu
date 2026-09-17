@@ -142,6 +142,49 @@ object TaskRepository {
         }
         return out
     }
+
+    /**
+     * 删除任务（递归删 tasks/<tid> 与 logs/<tid>）
+     * 注意：仅删除该任务自己的目录，不影响其他任务。
+     */
+    fun deleteTask(taskId: String): SubmitResult {
+        return try {
+            // 防路径穿越
+            if (taskId.contains("/") || taskId.contains("..")) {
+                return SubmitResult.Failure("非法 task_id")
+            }
+            var deleted = 0
+            val td = File(tasksRoot, taskId)
+            if (td.exists()) {
+                if (td.deleteRecursively()) deleted++ else
+                    return SubmitResult.Failure("删除任务目录失败")
+            }
+            val ld = File(logsRoot, taskId)
+            if (ld.exists()) {
+                ld.deleteRecursively()
+            }
+            // 从幂等索引里移除（若有）
+            try {
+                val idem = File(YunTuoXiuApp.CLOUD_ROOT, "idem_index.json")
+                if (idem.exists()) {
+                    @Suppress("UNCHECKED_CAST")
+                    val m = gson.fromJson(idem.readText(), Map::class.java) as? MutableMap<String, Any?>
+                    if (m != null) {
+                        val toRemove = m.entries.filter {
+                            val v = it.value as? Map<*, *>
+                            v?.get("task_id") == taskId
+                        }.map { it.key }
+                        toRemove.forEach { m.remove(it) }
+                        idem.writeText(gson.toJson(m))
+                    }
+                }
+            } catch (_: Throwable) {}
+            Log.i(TAG, "已删除任务 $taskId (删了 $deleted 个目录)")
+            SubmitResult.Success(taskId)
+        } catch (t: Throwable) {
+            SubmitResult.Failure("删除异常: ${t.message}")
+        }
+    }
 }
 
 /**
