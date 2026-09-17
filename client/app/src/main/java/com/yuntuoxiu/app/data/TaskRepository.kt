@@ -120,12 +120,20 @@ object TaskRepository {
 
             var created = 0
             if (haveTermux) {
-                // 只写 create 请求（reqFile 已在上面写好），并确保完整后端在跑
+                // 只写 create 请求（reqFile 已在上面写好）。
+                // ⚠️ 先检查后端是否已在线：在线就不重复触发启动
+                //    （避免每次提交都通过命令桥拉起 start_all，造成多实例）。
                 try {
-                    val ok = bridge.startDaemon(context)
-                    Log.i(TAG, if (ok) "已确保 Termux 完整后端在运行" else "Termux 后端启动请求失败")
+                    val (online, desc) = bridge.readDaemonStatus()
+                    if (online) {
+                        Log.i(TAG, "Termux 后端已在线，无需重启（$desc）")
+                    } else {
+                        Log.i(TAG, "Termux 后端未在线（$desc），尝试启动")
+                        val ok = bridge.startDaemon(context)
+                        Log.i(TAG, if (ok) "已确保 Termux 完整后端在运行" else "Termux 后端启动请求失败")
+                    }
                 } catch (t: Throwable) {
-                    Log.w(TAG, "启动 Termux 后端失败: ${t.message}")
+                    Log.w(TAG, "检查/启动 Termux 后端失败: ${t.message}")
                 }
             } else {
                 // 无 Termux：本地兜底创建骨架（仅作任务列表秒级占位）

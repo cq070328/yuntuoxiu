@@ -168,8 +168,20 @@ class MainActivity : AppCompatActivity() {
                     return@setOnClickListener
                 }
                 // 真实通道探针（比权限检查可靠）：尝试让 Termux 写一个标记文件
-                Toast.makeText(this@MainActivity, "正在探测 Termux 通道…", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "正在检查 Termux 后端…", Toast.LENGTH_SHORT).show()
                 lifecycleScope.launch {
+                    // ⚠️ 先看后端是否已在线（心跳）：在线则无需重启，
+                    //    避免每次都通过命令桥拉起 start_all 造成多实例。
+                    val (alreadyOnline, desc) = withContext(Dispatchers.IO) {
+                        TermuxBridge.readDaemonStatus()
+                    }
+                    if (alreadyOnline) {
+                        Toast.makeText(this@MainActivity,
+                            "✅ Termux 后端已在线（$desc），无需重启", Toast.LENGTH_LONG).show()
+                        withContext(Dispatchers.IO) { refreshTermuxStatus() }
+                        return@launch
+                    }
+                    // 未在线 -> 尝试启动
                     withContext(Dispatchers.IO) {
                         TermuxBridge.startDaemon(this@MainActivity)
                     }
@@ -179,6 +191,7 @@ class MainActivity : AppCompatActivity() {
                     if (chanOk) {
                         Toast.makeText(this@MainActivity,
                             "✅ 已请求启动完整后端，通道可用", Toast.LENGTH_LONG).show()
+                        withContext(Dispatchers.IO) { refreshTermuxStatus() }
                     } else {
                         AlertDialog.Builder(this@MainActivity)
                             .setTitle("Termux 通道未响应")
