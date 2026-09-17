@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
         val label: String,
         val packageName: String,
         val sourceDir: String,
-        val icon: Drawable?,
+        val icon: Drawable?
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -506,7 +506,7 @@ class MainActivity : AppCompatActivity() {
     // ---------- 任务列表适配器（图标 + 应用名 + 徽章 + 长按）----------
     inner class TaskAdapter(
         private val onClick: (TaskMetaView) -> Unit,
-        private val onLongClick: (TaskMetaView) -> Unit,
+        private val onLongClick: (TaskMetaView) -> Unit
     ) : RecyclerView.Adapter<TaskAdapter.VH>() {
 
         private var items: List<TaskMetaView> = emptyList()
