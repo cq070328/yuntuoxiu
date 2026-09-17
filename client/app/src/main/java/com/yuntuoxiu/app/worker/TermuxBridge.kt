@@ -49,34 +49,41 @@ object TermuxBridge {
     }
 
     /**
-     * 检查是否已授予 RUN_COMMAND 权限。
-     * 未授权时 startService 会被系统静默拒绝（SecurityException 只进 logcat），
-     * 因此必须先检查，给出明确提示。
-     */
-    fun hasRunCommandPermission(context: Context): Boolean {
-        return try {
-            context.checkSelfPermission(PERM_RUN_COMMAND) ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-        } catch (t: Throwable) {
-            false
-        }
-    }
-
-    /**
-     * 检查 Termux 是否开启了 allow-external-apps。
-     * ⚠️ APP 无法读取 Termux 私有目录的 termux.properties，
-     *    只能通过一个「探针命令 + 结果文件」间接判断（见 probeExternalApps）。
+     * 检查 RUN_COMMAND 权限。
      *
-     * @return Pair(是否已授权, 提示文案)
+     * ⚠️ 重要修正（v1.5.4）：
+     *   `com.termux.permission.RUN_COMMAND` 是 Termux 的**自定义权限**，
+     *   在绝大多数 ROM 上 `checkSelfPermission()` 会返回 DENIED ——
+     *   但**这不代表命令发不出去**！Termux 的 RunCommandService 对
+     *   「已在 Manifest 声明该权限」的调用方实际是放行的。
+     *
+     *   原实现用它做**硬拦截**，导致真机上「始终报缺少权限」、命令根本
+     *   没发出去。现在改为**宽松判断**：
+     *     - 只要 Manifest 声明了（编译期即固定），就认为「权限声明就绪」
+     *     - 真正的失败会在 startService / 探针阶段暴露
+     *
+     * @return Pair(声明是否就绪, 描述)
      */
     fun runCommandPermissionHint(context: Context): Pair<Boolean, String> {
         if (!isTermuxInstalled(context)) {
             return false to "Termux 未安装"
         }
-        if (!hasRunCommandPermission(context)) {
-            return false to "未授予 RUN_COMMAND 权限（请在系统设置中允许「云脱修」运行命令）"
+        // 宽松：不因 checkSelfPermission==DENIED 就拦截。
+        // 只做「安装 + 声明」检查；能否执行交给实际发送验证。
+        return true to "已就绪（若命令无效，请确认 Termux 已开启 allow-external-apps）"
+    }
+
+    /**
+     * 【诊断用】返回 RUN_COMMAND 权限的详细状态（不用于拦截）。
+     */
+    fun describeRunCommandPermission(context: Context): String {
+        return try {
+            val granted = context.checkSelfPermission(PERM_RUN_COMMAND) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            "declared=true, checkSelfPermission=${if (granted) "GRANTED" else "DENIED(正常,不影响执行)"}"
+        } catch (t: Throwable) {
+            "检查异常: ${t.message}"
         }
-        return true to "RUN_COMMAND 权限已就绪"
     }
 
     /** 打开 Termux（仅切到前台，不执行命令） */
@@ -117,10 +124,8 @@ object TermuxBridge {
             LogStore.w(TAG, "Termux 未安装，无法执行")
             return false
         }
-        if (!hasRunCommandPermission(context)) {
-            LogStore.w(TAG, "缺少 RUN_COMMAND 权限，Termux 不会收到命令（startService 会被静默拒绝）")
-            return false
-        }
+        // ⚠️ v1.5.4：不再用 checkSelfPermission 硬拦截（自定义权限会误报 DENIED）。
+        //    直接尝试发送；失败时记录明确原因。
         return try {
             // 让 Termux 把 stdout/stderr 落到工作区，APP 可轮询回读（沙箱隔离的绕行方案）
             val resultDir = File(RESULT_DIR).apply { mkdirs() }
@@ -135,7 +140,6 @@ object TermuxBridge {
                 putExtra("com.termux.RUN_COMMAND_ARGUMENTS", args.toTypedArray())
                 putExtra("com.termux.RUN_COMMAND_WORKDIR", workdir)
                 putExtra("com.termux.RUN_COMMAND_BACKGROUND", background)
-                // 标准 RUN_COMMAND 结果回传（需 Termux 侧配合）
                 putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "云脱修")
                 putExtra("com.termux.RUN_COMMAND_DESCRIPTION", "云脱修任务")
                 putExtra("com.termux.RUN_COMMAND_STDOUT", outFile)
@@ -147,9 +151,36 @@ object TermuxBridge {
             LogStore.i(TAG, "已向 Termux 发送命令: $command ${args.joinToString(" ")}")
             true
         } catch (t: Throwable) {
-            LogStore.e(TAG, "Termux 执行失败: ${t.message}")
+            // 常见失败：SecurityException（Termux 未开 allow-external-apps）、
+            //          IllegalStateException（后台服务限制）
+            LogStore.e(TAG, "Termux 执行失败: ${t.javaClass.simpleName}: ${t.message}")
+            LogStore.w(TAG, "  排查：① Termux 里开启 allow-external-apps  " +
+                    "② 确认 Termux 已至少启动过一次")
             false
         }
+    }
+
+    /**
+     * 【探针】验证「APP -> Termux」通道是否真的可用。
+     * 写一个标记文件，2 秒内出现即代表 RUN_COMMAND 生效。
+     * 这是比 checkSelfPermission 可靠得多的真实检测。
+     */
+    fun probeRunCommandChannel(context: Context): Boolean {
+        val marker = File(RESULT_DIR, ".chan_ok")
+        try { if (marker.exists()) marker.delete() } catch (_: Throwable) {}
+        File(RESULT_DIR).mkdirs()
+        val ok = runInTermux(
+            context,
+            TERMUX_BASH,
+            listOf("-c", "echo ok > '$RESULT_DIR/.chan_ok'"),
+            background = true
+        )
+        if (!ok) return false
+        repeat(20) {
+            if (marker.exists()) return true
+            try { Thread.sleep(150) } catch (_: Throwable) {}
+        }
+        return false
     }
 
     /**

@@ -83,6 +83,12 @@ class MainActivity : AppCompatActivity() {
         tvLog = findViewById(R.id.tvLog)
         svLog = findViewById(R.id.svLog)
 
+        // 长按 Termux 状态行 -> 诊断
+        findViewById<android.widget.TextView>(R.id.tvTermuxStatus)?.setOnLongClickListener {
+            diagnoseTermux()
+            true
+        }
+
         adapter = TaskAdapter(
             onClick = { task -> openDetail(task) },
             onLongClick = { task -> showTaskMenu(task) },
@@ -149,22 +155,43 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this@MainActivity, "请先安装 Termux", Toast.LENGTH_LONG).show()
                     return@setOnClickListener
                 }
-                val (permOk, hint) = TermuxBridge.runCommandPermissionHint(this@MainActivity)
-                if (!permOk) {
+                val (declared, hint) = TermuxBridge.runCommandPermissionHint(this@MainActivity)
+                if (!declared) {
                     AlertDialog.Builder(this@MainActivity)
                         .setTitle("Termux 联动未就绪")
                         .setMessage(hint + "\n\n解决：\n" +
                                 "1. 安装 Termux\n" +
-                                "2. Termux 里跑一次: bash /sdcard/MT2/apks/termux_bootstrap.sh\n" +
+                                "2. Termux 里跑一次: bash /sdcard/MT2/apks/termux_quick.sh\n" +
                                 "   （会安装工具并开启 allow-external-apps）")
                         .setPositiveButton("知道了", null)
                         .show()
                     return@setOnClickListener
                 }
-                val ok = TermuxBridge.startDaemon(this@MainActivity)
-                Toast.makeText(this@MainActivity,
-                    if (ok) "已请求启动完整后端（后端+worker）" else "启动失败（检查 Termux 权限）",
-                    Toast.LENGTH_LONG).show()
+                // 真实通道探针（比权限检查可靠）：尝试让 Termux 写一个标记文件
+                Toast.makeText(this@MainActivity, "正在探测 Termux 通道…", Toast.LENGTH_SHORT).show()
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        TermuxBridge.startDaemon(this@MainActivity)
+                    }
+                    val chanOk = withContext(Dispatchers.IO) {
+                        TermuxBridge.probeRunCommandChannel(this@MainActivity)
+                    }
+                    if (chanOk) {
+                        Toast.makeText(this@MainActivity,
+                            "✅ 已请求启动完整后端，通道可用", Toast.LENGTH_LONG).show()
+                    } else {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Termux 通道未响应")
+                            .setMessage("命令已发出，但 Termux 未响应。常见原因：\n\n" +
+                                    "1. Termux 未开启 allow-external-apps\n" +
+                                    "   在 Termux 里执行：\n" +
+                                    "   mkdir -p ~/.termux && echo \"allow-external-apps=true\" >> ~/.termux/termux.properties && termux-reload-settings\n\n" +
+                                    "2. Termux 从未启动过（先手动打开一次）\n\n" +
+                                    "3. Termux 版本过旧，请更新")
+                            .setPositiveButton("知道了", null)
+                            .show()
+                    }
+                }
             }
             setOnLongClickListener {
                 AlertDialog.Builder(this@MainActivity)
@@ -207,6 +234,40 @@ class MainActivity : AppCompatActivity() {
             tv.text = if (online) "✅ Termux $desc" else "⚠️ Termux $desc"
         } catch (t: Throwable) {
             LogStore.w(TAG, "刷新 Termux 状态失败: ${t.message}")
+        }
+    }
+
+    /**
+     * 诊断 Termux 联动（长按 Termux 状态行触发，或从菜单调用）。
+     * 输出：安装状态 + 权限声明 + 文件检查 + 通道探针。
+     */
+    private fun diagnoseTermux() {
+        lifecycleScope.launch {
+            val report = withContext(Dispatchers.IO) {
+                val sb = StringBuilder()
+                sb.append("== 云脱修 Termux 诊断 ==\n\n")
+                sb.append("1) Termux 已安装: ${TermuxBridge.isTermuxInstalled(this@MainActivity)}\n")
+                sb.append("2) RUN_COMMAND: ${TermuxBridge.describeRunCommandPermission(this@MainActivity)}\n")
+                val ws = java.io.File("/sdcard/MT2/apks")
+                sb.append("3) 工作区可读: ${ws.exists()}\n")
+                for (f in listOf("termux_start_all.sh", "termux_backend.sh",
+                        "termux_worker.sh", "termux_quick.sh")) {
+                    sb.append("   - $f: ${java.io.File(ws, f).exists()}\n")
+                }
+                val hb = java.io.File(ws, "unpackcloud/logs/termux_heartbeat.json")
+                sb.append("4) worker 心跳文件: ${hb.exists()}\n")
+                val hb2 = java.io.File(ws, "unpackcloud/logs/termux_backend_heartbeat.json")
+                sb.append("5) backend 心跳文件: ${hb2.exists()}\n")
+                sb.append("\n6) 通道探针（写标记文件）…\n")
+                val chan = TermuxBridge.probeRunCommandChannel(this@MainActivity)
+                sb.append("   -> ${if (chan) "✅ 通道可用" else "❌ 无响应"}\n")
+                sb.toString()
+            }
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("Termux 诊断结果")
+                .setMessage(report)
+                .setPositiveButton("知道了", null)
+                .show()
         }
     }
 
