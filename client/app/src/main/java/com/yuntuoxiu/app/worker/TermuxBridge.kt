@@ -124,10 +124,25 @@ object TermuxBridge {
             LogStore.w(TAG, "Termux 未安装，无法执行")
             return false
         }
-        // ⚠️ v1.5.4：不再用 checkSelfPermission 硬拦截（自定义权限会误报 DENIED）。
-        //    直接尝试发送；失败时记录明确原因。
+        // ① 先试 RUN_COMMAND（标准方式）
+        if (tryRunCommand(context, command, args, background, workdir)) {
+            return true
+        }
+        // ② RUN_COMMAND 被系统拦（SecurityException）-> 回退到「文件触发桥」
+        //    原理：worker 轮询 $CLOUD/cmd/*.cmd，执行后写 *.done
+        LogStore.w(TAG, "RUN_COMMAND 不可用，改用文件触发桥（cmd 队列）")
+        return writeCmdFile(command, args)
+    }
+
+    /** 尝试标准 RUN_COMMAND 方式；失败返回 false（不抛异常）。 */
+    private fun tryRunCommand(
+        context: Context,
+        command: String,
+        args: List<String>,
+        background: Boolean,
+        workdir: String
+    ): Boolean {
         return try {
-            // 让 Termux 把 stdout/stderr 落到工作区，APP 可轮询回读（沙箱隔离的绕行方案）
             val resultDir = File(RESULT_DIR).apply { mkdirs() }
             val stamp = "cmd_${System.currentTimeMillis()}"
             val outFile = File(resultDir, "$stamp.out").absolutePath
@@ -148,14 +163,64 @@ object TermuxBridge {
                 putExtra("com.termux.RUN_COMMAND_COMMAND_RESULT_STDERR", errFile)
             }
             context.startService(intent)
-            LogStore.i(TAG, "已向 Termux 发送命令: $command ${args.joinToString(" ")}")
+            LogStore.i(TAG, "RUN_COMMAND 已发送: $command ${args.joinToString(" ")}")
             true
         } catch (t: Throwable) {
-            // 常见失败：SecurityException（Termux 未开 allow-external-apps）、
-            //          IllegalStateException（后台服务限制）
-            LogStore.e(TAG, "Termux 执行失败: ${t.javaClass.simpleName}: ${t.message}")
-            LogStore.w(TAG, "  排查：① Termux 里开启 allow-external-apps  " +
-                    "② 确认 Termux 已至少启动过一次")
+            LogStore.w(TAG, "RUN_COMMAND 失败: ${t.javaClass.simpleName}: ${t.message}")
+            false
+        }
+    }
+
+    /**
+     * ⭐ 文件触发桥：把命令写到 $CLOUD/cmd/*.cmd，由 Termux worker 轮询执行。
+     * 完全绕开 RUN_COMMAND 权限限制（/sdcard 双方可读写）。
+     *
+     * 命令文件格式：第一行=命令，其余行=参数。
+     */
+    private fun writeCmdFile(command: String, args: List<String>): Boolean {
+        return try {
+            val cmdDir = File(WORKSPACE, "unpackcloud/cmd").apply { mkdirs() }
+            val name = "c_${System.currentTimeMillis()}_${(1000..9999).random()}.cmd"
+
+            // 把「命令 + 参数」翻译成 worker 能识别的 cmd 协议：
+            //   - 若 command 是 bash 脚本路径 -> run_script <路径> <参数...>
+            //   - 否则 -> exec <完整命令>
+            val content = when {
+                command.endsWith("/bash") || command.endsWith("bash") -> {
+                    // command 是 bash，args = [脚本, 参数...]
+                    if (args.isNotEmpty()) {
+                        "run_script\n" + args.joinToString("\n")
+                    } else {
+                        "ping"
+                    }
+                }
+                command.startsWith("/") && File(command).exists() -> {
+                    "run_script\n$command\n" + args.joinToString("\n")
+                }
+                else -> {
+                    // exec 模式：拼接命令
+                    "exec\n$command " + args.joinToString(" ")
+                }
+            }
+            File(cmdDir, name).writeText(content)
+            LogStore.i(TAG, "已写入命令桥: $name ($content)")
+
+            // 等待 worker 消费（最多 5 秒），成功则返回 true
+            val done = File(cmdDir, name.replace(".cmd", ".done"))
+            repeat(25) {
+                if (done.exists()) {
+                    try {
+                        LogStore.i(TAG, "命令桥回执: ${done.readText().trim()}")
+                        done.delete()
+                    } catch (_: Throwable) {}
+                    return true
+                }
+                try { Thread.sleep(200) } catch (_: Throwable) {}
+            }
+            LogStore.w(TAG, "命令桥等待超时（worker 可能未运行）")
+            false
+        } catch (t: Throwable) {
+            LogStore.e(TAG, "写命令桥失败: ${t.message}")
             false
         }
     }
