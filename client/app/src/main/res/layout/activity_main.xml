@@ -76,15 +76,33 @@
         android:layout_marginTop="8dp"
         android:layout_marginBottom="4dp" />
 
-    <!-- 运行日志（内嵌，任务列表下方，实时滚动） -->
-    <TextView
-        android:id="@+id/tvLogHeader"
+    <!-- 运行日志头部 + 清除按钮 -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="运行日志（实时）"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        android:textColor="#58A6FF" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tvLogHeader"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="运行日志（实时）"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="#58A6FF" />
+
+        <Button
+            android:id="@+id/btnClearLog"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:minWidth="0dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:textSize="11sp"
+            android:text="清除日志" />
+    </LinearLayout>
 
     <ScrollView
         android:id="@+id/svLog"
