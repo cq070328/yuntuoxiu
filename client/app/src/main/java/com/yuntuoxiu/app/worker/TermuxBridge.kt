@@ -129,7 +129,7 @@ object TermuxBridge {
             return true
         }
         // ② RUN_COMMAND 被系统拦（SecurityException）-> 回退到「文件触发桥」
-        //    原理：worker 轮询 $CLOUD/cmd/*.cmd，执行后写 *.done
+        //    原理：worker 轮询 cmd 目录下的 .cmd 文件，执行后写 .done
         LogStore.w(TAG, "RUN_COMMAND 不可用，改用文件触发桥（cmd 队列）")
         return writeCmdFile(command, args)
     }
@@ -172,7 +172,7 @@ object TermuxBridge {
     }
 
     /**
-     * ⭐ 文件触发桥：把命令写到 $CLOUD/cmd/*.cmd，由 Termux worker 轮询执行。
+     * ⭐ 文件触发桥：把命令写成 cmd 目录下的 .cmd 文件，由 Termux worker 轮询执行。
      * 完全绕开 RUN_COMMAND 权限限制（/sdcard 双方可读写）。
      *
      * 命令文件格式：第一行=命令，其余行=参数。
