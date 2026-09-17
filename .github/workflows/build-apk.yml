@@ -32,9 +32,9 @@ jobs:
           path: ~/android-sdk
           key: android-sdk-34-v2
 
-      # ⚡ Gradle 设置（v4 自带 build-cache + configuration-cache）
+      # ⚡ Gradle 设置（v3 已验证可用，自带缓存）
       - name: 设置 Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.7'
 
