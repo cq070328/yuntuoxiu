@@ -173,7 +173,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 lifecycleScope.launch {
                     val rep = withContext(Dispatchers.IO) {
-                        val ws = "/sdcard/MT2/apks"
+                        val ws = YunTuoXiuApp.WORKSPACE_ROOT
                         val items = listOf(
                             "NPatch素材" to "$ws/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex",
                             "脱壳模块" to "$ws/ytx-tools/ytxdump-module.apk",
@@ -280,7 +280,7 @@ class MainActivity : AppCompatActivity() {
     private fun diagnoseTermux() {
         lifecycleScope.launch {
             val report = withContext(Dispatchers.IO) {
-                val ws = "/sdcard/MT2/apks"
+                val ws = YunTuoXiuApp.WORKSPACE_ROOT
                 val sb = StringBuilder()
                 sb.append("== 云脱修 环境诊断 ==\n\n")
 
@@ -357,14 +357,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun readBackendPref(): String {
         return try {
-            val f = File("/sdcard/MT2/apks/unpackcloud/.build_backend")
+            val f = File(YunTuoXiuApp.CLOUD_ROOT, ".build_backend")
             if (f.exists()) f.readText().trim().ifBlank { "auto" } else "auto"
         } catch (t: Throwable) { "auto" }
     }
 
     private fun writeBackendPref(v: String) {
         try {
-            val f = File("/sdcard/MT2/apks/unpackcloud/.build_backend")
+            val f = File(YunTuoXiuApp.CLOUD_ROOT, ".build_backend")
             f.parentFile?.mkdirs()
             f.writeText(v)
         } catch (t: Throwable) {
@@ -378,11 +378,11 @@ class MainActivity : AppCompatActivity() {
             val (txt, ok) = withContext(Dispatchers.IO) {
                 val pref = readBackendPref()
                 // 可用性检查（粗粒度）
-                val cloudOk = File("/sdcard/MT2/apks/yuntuoxiu-dev/token.txt").let {
+                val cloudOk = File(YunTuoXiuApp.TOKEN_FILE).let {
                     it.exists() && it.length() > 20
                 }
                 val containerOk = File("/root/ytx-tools/apktool.jar").exists() ||
-                        File("/sdcard/MT2/apks/ytx-tools/apktool.jar").exists()
+                        File("${YunTuoXiuApp.TOOLS_DIR}/apktool.jar").exists()
                 val termuxOk = TermuxBridge.isTermuxInstalled(this@MainActivity)
 
                 val pick = when (pref) {
@@ -453,7 +453,7 @@ class MainActivity : AppCompatActivity() {
     private fun showWorkerOfflineDialog(onRetry: () -> Unit) {
         try {
             val hb = com.yuntuoxiu.app.worker.ContainerBridge.heartbeatInfo()
-            val cmds = "bash /sdcard/MT2/apks/ytx.sh start"
+            val cmds = "" + YunTuoXiuApp.START_CMD + ""
             AlertDialog.Builder(this, R.style.YtxDialog)
                 .setTitle("需要先启动后端")
                 .setMessage(
@@ -484,7 +484,7 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("我已启动，重试") { _, _ -> onRetry() }
                 .create().also { styleDialogWindow(it) }.show()
         } catch (t: Throwable) {
-            showResultDialog("后端离线", "请执行：bash /sdcard/MT2/apks/ytx.sh start")
+            showResultDialog("后端离线", "请执行：" + YunTuoXiuApp.START_CMD + "")
         }
     }
 
@@ -507,7 +507,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            val ws = "/sdcard/MT2/apks"
+            val ws = YunTuoXiuApp.WORKSPACE_ROOT
             val tid = task.taskId
             val taskDir = File("$ws/unpackcloud/tasks/$tid")
             val log = StringBuilder("== 一键脱修 · $tid ==\n\n")
@@ -574,7 +574,7 @@ class MainActivity : AppCompatActivity() {
                         "注入/构建需要容器（有 bash+java+python3），\n" +
                         "而 Shizuku shell 没有这些。\n\n" +
                         "解决：在 Operit 终端执行：\n" +
-                        "  bash /sdcard/MT2/apks/ytx.sh start\n\n" +
+                        "  " + YunTuoXiuApp.START_CMD + "\n\n" +
                         "（或点长按「本地引擎」查看心跳）")
                     return@launch
                 }
@@ -669,14 +669,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun diagnoseTask(task: TaskMetaView) {
-        val outApk = File("/sdcard/MT2/apks/云脱修-${task.taskId}.apk")
+        val outApk = File("${YunTuoXiuApp.WORKSPACE_ROOT}/云脱修-${task.taskId}.apk")
         val pkg = task.lookupPackage ?: "?"
         lifecycleScope.launch {
             Toast.makeText(this@MainActivity, "正在诊断…", Toast.LENGTH_SHORT).show()
             val out = withContext(Dispatchers.IO) {
                 try {
                     ShizukuShellExecutor.exec(
-                        "sh /sdcard/MT2/apks/ytx_diag_launch.sh " +
+                        "sh ${YunTuoXiuApp.WORKSPACE_ROOT}/ytx_diag_launch.sh " +
                         "'${outApk.absolutePath}' '$pkg' 2>&1 | tail -20"
                     ).getString("stdout") ?: "（无输出）"
                 } catch (t: Throwable) { "诊断失败: ${t.message}" }
@@ -856,7 +856,7 @@ class MainActivity : AppCompatActivity() {
             names.map { Triple("", it, "") }
         ) { which ->
             val t = cands[which]
-            val ws = "/sdcard/MT2/apks"
+            val ws = YunTuoXiuApp.WORKSPACE_ROOT
             val dumpDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}/dump")
             if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
                 Toast.makeText(this@MainActivity,
@@ -872,7 +872,7 @@ class MainActivity : AppCompatActivity() {
                                 "❌ 容器 worker 未运行。\n\n" +
                                 "云端构建需 python3（容器有，Shizuku 无）。\n" +
                                 "请在 Operit 终端执行：\n" +
-                                "  bash /sdcard/MT2/apks/ytx.sh start")
+                                "  " + YunTuoXiuApp.START_CMD + "")
                             return@launch
                         }
                         val (ok, detail, _) = withContext(Dispatchers.IO) {
@@ -932,13 +932,13 @@ class MainActivity : AppCompatActivity() {
                     "smali 替换需 python3 + apktool(java)，\n" +
                     "Shizuku shell 没有这些。\n\n" +
                     "请在 Operit 终端执行：\n" +
-                    "  bash /sdcard/MT2/apks/ytx.sh start")
+                    "  " + YunTuoXiuApp.START_CMD + "")
                 return@launch
             }
 
             val out = withContext(Dispatchers.IO) {
                 try {
-                    val ws = "/sdcard/MT2/apks"
+                    val ws = YunTuoXiuApp.WORKSPACE_ROOT
                     val tid = task.taskId
                     val dec = "$ws/unpackcloud/tasks/$tid/work/apktool_dec"
 
@@ -973,7 +973,7 @@ class MainActivity : AppCompatActivity() {
     private fun toolEnvCheck() {
         lifecycleScope.launch {
             val rep = withContext(Dispatchers.IO) {
-                val ws = "/sdcard/MT2/apks"
+                val ws = YunTuoXiuApp.WORKSPACE_ROOT
                 val sb = StringBuilder("== 云脱修 环境自检 ==\n\n")
                 sb.append("[核心]\n")
                 sb.append("  ${if (ShizukuClient.isGranted()) "✅" else "❌"} Shizuku 已授权\n")
@@ -1238,7 +1238,7 @@ class MainActivity : AppCompatActivity() {
 
             val r = withContext(Dispatchers.IO) {
                 try {
-                    // ① 目标：/sdcard/MT2/apks/unpackcloud/uploads/installed_<pkg>.apk
+                    // ① 目标：CLOUD_ROOT/uploads/installed_<pkg>.apk
                     val upDir = File(YunTuoXiuApp.UPLOADS_ROOT)
                     upDir.mkdirs()
                     val dest = File(upDir, "installed_${pkg}.apk")
