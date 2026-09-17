@@ -114,10 +114,23 @@ object TaskRepository {
                 Log.w(TAG, "AutoWatcher 触发失败: ${t.message}"); 0
             }
 
+            // 5) 【B 方案】自动拉起 Termux 执行 dump/修复/打包（若有 Termux）
+            try {
+                if (com.yuntuoxiu.app.worker.TermuxBridge.isTermuxInstalled(context)) {
+                    // 找到刚创建的任务 id（最新的 t_ 开头）
+                    val tid = findLatestTaskId()
+                    if (tid != null) {
+                        com.yuntuoxiu.app.worker.TermuxBridge.runTaskPipeline(
+                            context, tid, background = true)
+                        Log.i(TAG, "已自动派发任务给 Termux: $tid")
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "派发 Termux 失败: ${t.message}")
+            }
+
             if (created == 0) {
-                // 兜底：AutoWatcher 未创建（如已有同 APK 活跃任务），
-                // 仍保留请求文件，等 WorkerService 轮询再试
-                Log.i(TAG, "AutoWatcher 未创建新任务（可能已存在），请求已入队")
+                Log.i(TAG, "AutoWatcher 未创建新任务（可能已存在）")
             }
 
             Log.i(TAG, "已提交: ${dest.absolutePath} (pkg=$pkg, created=$created)")
@@ -163,6 +176,20 @@ object TaskRepository {
             }
         }
         return out
+    }
+
+    /**
+     * 找最新创建的任务 ID（t_ 开头，按目录名时间戳排序）
+     */
+    fun findLatestTaskId(): String? {
+        return try {
+            val dirs = File(tasksRoot).listFiles { f ->
+                f.isDirectory && f.name.startsWith("t_")
+            } ?: return null
+            dirs.maxByOrNull { it.name }?.name
+        } catch (t: Throwable) {
+            null
+        }
     }
 
     /**
