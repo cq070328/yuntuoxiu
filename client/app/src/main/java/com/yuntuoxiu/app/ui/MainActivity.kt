@@ -153,7 +153,9 @@ class MainActivity : AppCompatActivity() {
             chooseBuildBackend()
         }
 
-        // 【v1.6.2】一键脱修（全自动串行）
+        // 【v1.7.0】一键脱修
+        //   · worker 在线 → 直接走 APP 全自动流程
+        //   · worker 离线 → 引导到 Operit（容器归 Operit，APP 无法直启）
         findViewById<View>(R.id.btnDiagnose)?.setOnClickListener {
             runOneClickUnpack()
         }
@@ -448,43 +450,60 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * ⭐ v1.6.9 后端离线提示（可一键复制命令 / 跳转 Operit）
+     * ⭐ v1.7.0 后端离线提示（阶梯式引导）
+     *
+     * 为什么需要引导：
+     *   容器进程属 Operit（uid 隔离），Shizuku/本 APP 都无法启动它。
+     *   → 只能让 Operit 侧启动。
      */
     private fun showWorkerOfflineDialog(onRetry: () -> Unit) {
         try {
             val hb = com.yuntuoxiu.app.worker.ContainerBridge.heartbeatInfo()
-            val cmds = "" + YunTuoXiuApp.START_CMD + ""
+
+            // ★ 给 Operit 的指令（复制到剪贴板）
+            val operitCmd = "启动云脱修后端（bash /sdcard/MT2/apks/ytx.sh start）"
+
             AlertDialog.Builder(this, R.style.YtxDialog)
                 .setTitle("需要先启动后端")
                 .setMessage(
-                    "云脱修的「注入 / 构建」依赖 Operit 容器里的 bash+java+python3。\n" +
-                    "当前检测不到容器 worker。\n\n" +
-                    "心跳: $hb\n\n" +
-                    "请在 Operit 终端执行：\n" +
-                    "  $cmds\n\n" +
-                    "（点「复制命令」后粘贴到 Operit 终端）"
+                    "云脱修的「注入 / 构建」依赖 Operit 容器（bash+java+python3），\n" +
+                    "而容器进程属于 Operit，本 APP 无法直接启动它。\n\n" +
+                    "【方式一 · 推荐】\n" +
+                    "复制下面这句，粘贴到 Operit 对话框发送：\n" +
+                    "  $operitCmd\n" +
+                    "（Operit 会调用 yuntuoxiu 包启动后端）\n\n" +
+                    "【方式二 · 终端】\n" +
+                    "在 Operit 终端执行：\n" +
+                    "  ${YunTuoXiuApp.START_CMD}\n\n" +
+                    "当前心跳: $hb"
                 )
-                .setPositiveButton("复制命令") { _, _ ->
-                    copyToClipboard("ytx_cmd", cmds)
-                    Toast.makeText(this, "✅ 已复制，请到 Operit 终端粘贴执行",
-                        Toast.LENGTH_LONG).show()
+                .setPositiveButton("复制并打开 Operit") { _, _ ->
+                    copyToClipboard("ytx_operit", operitCmd)
+                    Toast.makeText(this,
+                        "✅ 已复制，粘贴到 Operit 发送即可", Toast.LENGTH_LONG).show()
+                    openOperit()
                 }
-                .setNeutralButton("打开 Operit") { _, _ ->
-                    try {
-                        val i = packageManager.getLaunchIntentForPackage(
-                            "com.ai.assistance.operit")
-                        if (i != null) startActivity(i)
-                        else Toast.makeText(this, "未找到 Operit",
-                            Toast.LENGTH_SHORT).show()
-                    } catch (t: Throwable) {
-                        Toast.makeText(this, "打开失败: ${t.message}",
-                            Toast.LENGTH_SHORT).show()
-                    }
-                }
+                .setNeutralButton("打开 Operit") { _, _ -> openOperit() }
                 .setNegativeButton("我已启动，重试") { _, _ -> onRetry() }
                 .create().also { styleDialogWindow(it) }.show()
         } catch (t: Throwable) {
-            showResultDialog("后端离线", "请执行：" + YunTuoXiuApp.START_CMD + "")
+            showResultDialog("后端离线",
+                "请在 Operit 执行：\n${YunTuoXiuApp.START_CMD}")
+        }
+    }
+
+    /** 打开 Operit（主界面） */
+    private fun openOperit() {
+        try {
+            val i = packageManager.getLaunchIntentForPackage("com.ai.assistance.operit")
+            if (i != null) {
+                i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(i)
+            } else {
+                Toast.makeText(this, "未找到 Operit", Toast.LENGTH_SHORT).show()
+            }
+        } catch (t: Throwable) {
+            Toast.makeText(this, "打开失败: ${t.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
