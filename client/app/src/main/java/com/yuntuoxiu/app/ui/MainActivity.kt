@@ -461,6 +461,20 @@ class MainActivity : AppCompatActivity() {
                 val isRealShell = !shellTag.equals("NONE", true) &&
                         !shellTag.equals("CLEAN", true) && v.confidence > 0.5
 
+                // ⭐ v1.6.3 关键修复：无壳 App 不需要注入！
+                //   原因：注入 lspatch 后，无壳 App 会因 loadLibrary 失败而崩
+                //        （lspatch 需要目标已有某些 native 依赖）
+                //   正确做法：无壳 -> 直接结束，提示「无需脱壳」
+                if (!isRealShell) {
+                    log.append("\n✅ 未检测到加固（壳类型: $shellTag）\n")
+                    log.append("无需脱壳 —— 原 APK 可直接使用。\n\n")
+                    log.append("如果确实有壳但未被识别，可：\n")
+                    log.append("· 工具 →「壳诊断」详情确认\n")
+                    log.append("· 工具 →「smali 替换」手动修\n")
+                    showResultDialog("一键脱修 · 无需处理", log.toString())
+                    return@launch
+                }
+
                 // ---------- ② 壳清理 ----------
                 stage = "2/7 壳清理"
                 var workApk = task.sourceApk

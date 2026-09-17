@@ -152,15 +152,38 @@ object ShellDetect {
                 dexCount = dexEntries.size
                 val soCount = entries.count { it.endsWith(".so") }
 
-                // 3a) 极小 dex（需 >= 2 个 dex 才算壳入口）
+                // 3a) 极小 dex（v1.6.3 修正：避免误报）
+                //
+                //   旧规则：只要有 1 个 <10KB 的 dex + dex 数 >= 2 → 判壳
+                //     ❌ 误报严重（正常多 dex 应用常有小 dex，如资源/注解）
+                //
+                //   新规则（更准）：
+                //     · 主 dex（classes.dex）必须「小」（<200KB）—— 壳引导代码
+                //     · 且存在 >= 2 个「大小相同的小 dex」—— 占位 stub
+                //   只有「主 dex 小 + stub 占位」才是一代抽取壳的强特征
                 val dexSizes = dexEntries.map { n ->
                     n to (zip.getEntry(n)?.size ?: 0L)
                 }
-                val tiny = dexSizes.filter { it.second in 1..10239L }
-                if (tiny.isNotEmpty() && dexEntries.size >= 2) {
-                    bump("EXTRACT_SHELL", 0.45,
-                        "极小 dex(${tiny[0].first}=${tiny[0].second}B)疑似壳入口")
+                val mainDexSize = dexSizes
+                    .firstOrNull { it.first == "classes.dex" }?.second ?: Long.MAX_VALUE
+
+                // 小 dex（< 100KB，排除正常业务 dex）
+                val tiny = dexSizes.filter { it.second in 1..102399L }
+                // 是否有 >= 2 个「大小相同」的小 dex（stub 占位特征）
+                val tinySizeGroups = tiny.groupBy { it.second }
+                    .filter { it.value.size >= 2 }
+                val hasDupStub = tinySizeGroups.isNotEmpty()
+
+                if (mainDexSize < 204800L && hasDupStub) {
+                    // 强特征：主 dex 小 + 重复 stub
+                    bump("EXTRACT_SHELL", 0.72,
+                        "主 dex 小(${mainDexSize}B) + ${tinySizeGroups.size} 组等大小 stub")
+                } else if (mainDexSize < 51200L && dexEntries.size >= 2) {
+                    // 中等特征：主 dex 极小（<50KB）
+                    bump("EXTRACT_SHELL", 0.55,
+                        "主 dex 极小(${mainDexSize}B)疑似壳引导")
                 }
+                // 否则不判（避免误报）
                 // 3b) dex 少 so 多
                 if (dexEntries.size <= 2 && soCount > 10) {
                     bump("OVERALL_SHELL", 0.45,
