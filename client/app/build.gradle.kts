@@ -20,9 +20,35 @@ android {
         }
     }
 
+    // ⭐ v1.6 修复：固定签名（否则每次 CI 编译用随机 debug.keystore
+    //   → 签名变化 → 覆盖安装失败 + Shizuku 授权丢失）
+    //
+    // keystore 位置：client/ytx-release.jks
+    //   （本地 src/ytx-release.jks；push.sh 会把它复制为 client/）
+    signingConfigs {
+        create("ytx") {
+            val ks = rootProject.file("ytx-release.jks")
+            if (ks.exists()) {
+                storeFile = ks
+                storePassword = "ytx12345"
+                keyAlias = "ytx"
+                keyPassword = "ytx12345"
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            // ★ 关键：debug 也用固定签名（CI 编的是 assembleDebug）
+            if (signingConfigs.findByName("ytx")?.storeFile != null) {
+                signingConfig = signingConfigs.getByName("ytx")
+            }
+        }
         release {
             isMinifyEnabled = false
+            if (signingConfigs.findByName("ytx")?.storeFile != null) {
+                signingConfig = signingConfigs.getByName("ytx")
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
