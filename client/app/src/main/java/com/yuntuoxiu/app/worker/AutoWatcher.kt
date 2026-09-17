@@ -217,8 +217,7 @@ object AutoWatcher {
         val apkName = File(apkPath).name
         val terminal = setOf("SUCCESS", "FAILED", "CANCELLED", "PRE_CHECK_FAILED")
         return try {
-            val dirs = tasksRoot.listFiles()
-            if (dirs == null) return false
+            val dirs = tasksRoot.listFiles() ?: return false
             for (d in dirs) {
                 if (!d.isDirectory) continue
                 val mf = File(d, "meta/task_meta.json")
@@ -228,10 +227,18 @@ object AutoWatcher {
                     val m = gson.fromJson(mf.readText(), Map::class.java) as? Map<String, Any?>
                     val st = m?.get("state")?.toString() ?: ""
                     val src = m?.get("source_apk")?.toString() ?: ""
-                    File(src).name == apkName && st !in terminal
-                } catch (t: Throwable) { false }
-            } == true
-        } catch (t: Throwable) { false }
+                    // 同 APK 且非终态 → 已有活跃任务
+                    if (File(src).name == apkName && st !in terminal) {
+                        return true
+                    }
+                } catch (t: Throwable) {
+                    // 单个任务解析失败不影响整体
+                }
+            }
+            false
+        } catch (t: Throwable) {
+            false
+        }
     }
 
     private fun archive(reqFile: File) {
