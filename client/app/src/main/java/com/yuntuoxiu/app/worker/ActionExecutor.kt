@@ -225,7 +225,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
      * v1.6 新增。调容器/Termux 的 ytx_build_from_dump.sh。
      *
      * ⚠️ 注意：构建是重活（apktool/java），需容器或 Termux。
-     *   本动作会通过命令桥（cmd/*.cmd）触发，由 worker 执行。
+     *   本动作会通过「命令桥」（cmd 目录下的 .cmd 文件）触发，由 worker 执行。
      */
     private fun onBuild(payload: ActionPayload): ActionResponse {
         val origApk = payload.params["original_apk"] as? String
