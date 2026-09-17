@@ -71,6 +71,7 @@ data class TaskMetaView(
     @SerializedName("artifact_status") val artifactStatus: String? = null,
     @SerializedName("handler_trace") val handlerTrace: List<Map<String, Any?>> = emptyList(),
     @SerializedName("degrade_trace") val degradeTrace: List<Map<String, Any?>> = emptyList(),
+    @SerializedName("local_skeleton") val localSkeleton: Boolean = false,
     @SerializedName("created_at") val createdAt: Long = 0,
     @SerializedName("updated_at") val updatedAt: Long = 0
 ) {
@@ -79,6 +80,7 @@ data class TaskMetaView(
 
     val stateLabel: String
         get() = when (state) {
+            "PENDING_LOCAL" -> "已提交（待后端）"   // 本地骨架
             "CREATED" -> "已创建"
             "PRE_CHECKING" -> "预检中"
             "PRE_CHECK_FAILED" -> "预检失败"
@@ -96,8 +98,8 @@ data class TaskMetaView(
         }
 
     /**
-     * 三状态分组（用于列表徽章）
-     *  - PROCESSING：所有非终态
+     * 三状态分组
+     *  - PROCESSING：非终态（含本地骨架）
      *  - SUCCESS   ：SUCCESS
      *  - FAILED    ：FAILED / PRE_CHECK_FAILED / CANCELLED
      */
