@@ -1,0 +1,73 @@
+name: Build YunTuoXiu APK
+
+# 触发方式：
+#   1) 手动触发（推荐）：Actions 页面 → 选本 workflow → Run workflow
+#   2) 推送到 main/master
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 用官方 action 自动安装并缓存 Gradle（无需仓库里有 gradlew）
+      - name: 设置 Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: 设置 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 接受 SDK 许可
+        run: yes | sdkmanager --licenses > /dev/null 2>&1 || true
+
+      - name: 安装所需 SDK 组件
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" > /dev/null 2>&1 || true
+
+      - name: 生成 local.properties
+        working-directory: client
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: 编译 Debug APK
+        working-directory: client
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: 列出产物
+        if: always()
+        run: |
+          echo "=== 产物搜索 ==="
+          find client/app/build/outputs -name '*.apk' -exec ls -la {} \; 2>/dev/null || echo "(无 APK)"
+
+      - name: 上传 APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuntuoxiu-debug-apk
+          path: client/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传编译报告（失败时排错用）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            client/app/build/reports/**
+            client/build/reports/**
+          if-no-files-found: ignore
