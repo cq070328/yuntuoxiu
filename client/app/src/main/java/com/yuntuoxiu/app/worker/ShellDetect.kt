@@ -93,7 +93,7 @@ object ShellDetect {
     private val FALSE_POSITIVE = listOf(
         "libshellcommand", "libshellutils", "libprotectview",
         "libprotectactivity", "libsecurit", "libsecuritysdk",
-        "libshieldgame", "libshieldui",
+        "libshieldgame", "libshieldui"
     )
 
     /** 对 APK 做壳识别（读 zip 条目名 + DEX 启发式） */
@@ -187,7 +187,7 @@ object ShellDetect {
                     "Lcom/wrapper/proxyapplication" to "ProxyApplication",
                     "libjiagu" to "jiagu 字符串",
                     "libmetasec" to "metasec 字符串",
-                    "libnpth" to "npth 字符串",
+                    "libnpth" to "npth 字符串"
                 )
                 for (dn in dexEntries.take(2)) {
                     try {
