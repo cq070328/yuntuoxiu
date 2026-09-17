@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.yuntuoxiu.app.R
+import com.yuntuoxiu.app.data.SubmitResult
 import com.yuntuoxiu.app.data.TaskMetaView
 import com.yuntuoxiu.app.data.TaskRepository
 import com.yuntuoxiu.app.worker.WorkerService
@@ -97,18 +98,22 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == REQ_PICK_APK && resultCode == Activity.RESULT_OK) {
             val uri = data?.data ?: return
             lifecycleScope.launch {
-                withContext(Dispatchers.IO) {
+                val r = withContext(Dispatchers.IO) {
                     // 从 SAF uri 复制到本地临时文件后提交
                     val tmp = File(cacheDir, "picked_${System.currentTimeMillis()}.apk")
                     contentResolver.openInputStream(uri)?.use { ins ->
                         tmp.outputStream().use { outs -> ins.copyTo(outs) }
                     }
                     TaskRepository.submitTask(this@MainActivity, tmp, allowAutoDegrade = true)
-                }.onSuccess {
-                    Toast.makeText(this@MainActivity, "任务已提交，等待后端处理", Toast.LENGTH_SHORT).show()
-                    refreshTasks()
-                }.onFailure { e ->
-                    Toast.makeText(this@MainActivity, "提交失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+                when (r) {
+                    is SubmitResult.Success -> {
+                        Toast.makeText(this@MainActivity, "任务已提交，等待后端处理", Toast.LENGTH_SHORT).show()
+                        refreshTasks()
+                    }
+                    is SubmitResult.Failure -> {
+                        Toast.makeText(this@MainActivity, "提交失败: ${r.reason}", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }
