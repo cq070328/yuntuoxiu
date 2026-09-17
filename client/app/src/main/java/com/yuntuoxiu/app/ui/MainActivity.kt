@@ -785,28 +785,37 @@ class MainActivity : AppCompatActivity() {
             names.map { Triple("", it, "") }
         ) { which ->
             val t = cands[which]
+            val ws = "/sdcard/MT2/apks"
             val dumpDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}/dump")
             if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
                 Toast.makeText(this@MainActivity,
                     "该任务无 dump（先用「收集 Dump」）", Toast.LENGTH_LONG).show()
                 return@showItemsDialog
             }
-            lifecycleScope.launch {
-            Toast.makeText(this@MainActivity,
-            "云端构建中（可能几分钟）…", Toast.LENGTH_LONG).show()
-            val out = withContext(Dispatchers.IO) {
-            try {
-            val sh = "/sdcard/MT2/apks/ytx-cloud-build.py"
-            val cmd = "python3 $sh --task '${t.taskId}' " +
-            "--apk '${t.sourceApk}' --dump '${dumpDir.absolutePath}' 2>&1 | tail -15"
-            val r = ShizukuShellExecutor.execWithTimeout(cmd, 1800_000)
-            (r.getString("stdout") ?: "（无输出）")
-            } catch (e: Throwable) {
-            "云端构建失败: ${e.message}"
-            }
-            }
-            showResultDialog("云端构建结果", out)
-            }
+// ⭐ v1.6.7 修复：改为容器委托（Shizuku shell 无 python3）
+                    lifecycleScope.launch {
+                        Toast.makeText(this@MainActivity,
+                            "云端构建中（可能几分钟）…", Toast.LENGTH_LONG).show()
+                        if (!com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()) {
+                            showResultDialog("云端构建", 
+                                "❌ 容器 worker 未运行。\n\n" +
+                                "云端构建需 python3（容器有，Shizuku 无）。\n" +
+                                "请在 Operit 终端执行：\n" +
+                                "  bash /sdcard/MT2/apks/ytx.sh start")
+                            return@launch
+                        }
+                        val (ok, detail, _) = withContext(Dispatchers.IO) {
+                            com.yuntuoxiu.app.worker.ContainerBridge.execSync(
+                                "$ws/ytx-cloud-build.py",
+                                listOf("--task", t.taskId,
+                                       "--apk", t.sourceApk,
+                                       "--dump", dumpDir.absolutePath),
+                                1_800_000
+                            )
+                        }
+                        showResultDialog("云端构建结果",
+                            if (ok) "✅ $detail" else "❌ $detail")
+                    }
         }
         }
     }
@@ -845,29 +854,42 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this@MainActivity,
                 if (dryRun) "识别中…" else "替换中…", Toast.LENGTH_SHORT).show()
 
+            // ⭐ v1.6.7 修复：改为容器委托（Shizuku shell 无 python3/java）
+            if (!com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()) {
+                showResultDialog(if (dryRun) "smali 识别" else "smali 替换",
+                    "❌ 容器 worker 未运行。\n\n" +
+                    "smali 替换需 python3 + apktool(java)，\n" +
+                    "Shizuku shell 没有这些。\n\n" +
+                    "请在 Operit 终端执行：\n" +
+                    "  bash /sdcard/MT2/apks/ytx.sh start")
+                return@launch
+            }
+
             val out = withContext(Dispatchers.IO) {
                 try {
                     val ws = "/sdcard/MT2/apks"
                     val tid = task.taskId
                     val dec = "$ws/unpackcloud/tasks/$tid/work/apktool_dec"
 
-                    // ① 若还没解包，先解包
+                    // ① 若还没解包，先委托容器解包
                     if (!File(dec).exists()) {
-                        val script = """
-                            cd /tmp && java -jar $ws/ytx-tools/apktool.jar d \
-                            '${task.sourceApk}' -o '$dec' -f >/dev/null 2>&1
-                        """.trimIndent()
-                        ShizukuShellExecutor.execWithTimeout(script, 300_000)
-                    }
-                    if (!File(dec).exists()) {
-                        return@withContext "❌ 解包失败（apktool 不可用？）"
+                        val (ok1, d1, _) = com.yuntuoxiu.app.worker.ContainerBridge.execSh(
+                            "mkdir -p '$dec' && java -jar $ws/ytx-tools/apktool.jar d " +
+                            "'${task.sourceApk}' -o '$dec' -f 2>&1 | tail -5",
+                            300_000
+                        )
+                        if (!File(dec).exists()) {
+                            return@withContext "❌ 解包失败\n$d1"
+                        }
                     }
 
-                    // ② 调 ytx-smali-patch.py
-                    val dryFlag = if (dryRun) "--dry-run" else ""
-                    val cmd = "python3 $ws/ytx-smali-patch.py '$dec' $dryFlag 2>&1 | tail -25"
-                    ShizukuShellExecutor.execWithTimeout(cmd, 300_000)
-                        .getString("stdout") ?: "（无输出）"
+                    // ② 委托容器调 ytx-smali-patch.py
+                    val args = mutableListOf(dec)
+                    if (dryRun) args += "--dry-run"
+                    val (ok2, detail, _) = com.yuntuoxiu.app.worker.ContainerBridge.execSync(
+                        "$ws/ytx-smali-patch.py", args, 300_000
+                    )
+                    if (ok2) detail else "❌ $detail"
                 } catch (t: Throwable) {
                     "❌ 失败: ${t.message}"
                 }
