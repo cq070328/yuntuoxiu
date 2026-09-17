@@ -29,6 +29,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.yuntuoxiu.app.LogStore
 import com.yuntuoxiu.app.R
+import com.yuntuoxiu.app.YunTuoXiuApp
 import com.yuntuoxiu.app.data.SubmitResult
 import com.yuntuoxiu.app.data.TaskGroup
 import com.yuntuoxiu.app.data.TaskMetaView
