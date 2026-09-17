@@ -392,8 +392,13 @@ class MainActivity : AppCompatActivity() {
     // ---------------- 任务列表 ----------------
 
     private fun openDetail(task: TaskMetaView) {
-        startActivity(Intent(this, TaskDetailActivity::class.java)
-            .putExtra(TaskDetailActivity.EXTRA_TASK_ID, task.taskId))
+        try {
+            startActivity(Intent(this, TaskDetailActivity::class.java)
+                .putExtra(TaskDetailActivity.EXTRA_TASK_ID, task.taskId))
+        } catch (t: Throwable) {
+            LogStore.e(TAG, "打开详情失败: ${t.message}")
+            Toast.makeText(this@MainActivity, "打开失败: ${t.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun startAutoRefresh() {
