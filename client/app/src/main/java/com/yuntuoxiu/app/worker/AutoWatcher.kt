@@ -75,6 +75,9 @@ object AutoWatcher {
         try {
             val active = com.yuntuoxiu.app.data.TaskRepository.listTasks()
                 .filter { !it.isTerminal }
+                // ⚠️ 跳过本地骨架：local_ 任务只是「待后端接管」的占位，
+                //    其 work/actions 下没有真实指令，避免和正式任务重复处理。
+                .filter { !it.taskId.startsWith("local_") }
             for (task in active) {
                 try {
                     val queue = ActionQueue(task.taskId)
@@ -119,7 +122,9 @@ object AutoWatcher {
             archive(reqFile); return false
         }
 
-        val tid = "t_${System.currentTimeMillis()}_${randomHex(4)}"
+        // ⚠️ 修复：APP 创建的本地骨架必须用 "local_" 前缀 + local_skeleton=true，
+        //    否则后端 watcher._cleanup_local_skeleton 永远无法清理，导致任务列表重复。
+        val tid = "local_${System.currentTimeMillis()}_${randomHex(4)}"
         val taskDir = File(tasksRoot, tid)
 
         // 1) 创建隔离目录
@@ -168,6 +173,9 @@ object AutoWatcher {
             "artifact_status" to null,
             "handler_trace" to emptyList<Any>(),
             "degrade_trace" to emptyList<Any>(),
+            // ⚠️ 修复：字段名必须与后端一致（后端读 local_skeleton），
+            //    同时保留 local_watcher 兼容旧逻辑。
+            "local_skeleton" to true,
             "local_watcher" to true,
             "created_at" to now,
             "updated_at" to now
