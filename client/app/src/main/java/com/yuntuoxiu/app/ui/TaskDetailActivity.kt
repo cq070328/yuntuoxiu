@@ -12,6 +12,7 @@ import com.yuntuoxiu.app.data.SubmitResult
 import com.yuntuoxiu.app.data.TaskMetaView
 import com.yuntuoxiu.app.data.TaskRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -93,6 +94,35 @@ class TaskDetailActivity : AppCompatActivity() {
         }
 
         load()
+        startAutoRefresh()
+    }
+
+    /**
+     * 自动刷新：任务非终态时每 2 秒刷新一次（进度可见）；
+     * 到达终态则停止（省电）。生命周期绑定，onDestroy 自动取消。
+     */
+    private fun startAutoRefresh() {
+        lifecycleScope.launch {
+            var terminalHits = 0
+            while (true) {
+                delay(2000)
+                try {
+                    val task = withContext(Dispatchers.IO) {
+                        try { TaskRepository.loadTask(taskId) } catch (t: Throwable) { null }
+                    }
+                    if (task != null && !task.isTerminal) {
+                        terminalHits = 0
+                        load()
+                    } else {
+                        // 连续两次终态后停止刷新（给一个缓冲，避免刚终态漏刷）
+                        if (++terminalHits >= 2) break
+                        load()
+                    }
+                } catch (t: Throwable) {
+                    LogStore.e(TAG, "自动刷新异常: ${t.message}")
+                }
+            }
+        }
     }
 
     private fun load() {
