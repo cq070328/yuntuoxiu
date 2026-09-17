@@ -88,6 +88,53 @@ object LogStore {
         }
     }
 
+    /**
+     * ⭐ v1.6.5 增量读取（供 UI 追加，不整段重载）
+     *
+     * @param sinceSeq 上次读取到的「序号」（首次传 -1）
+     * @return Triple(新行列表-已去重, 最新序号, 去重统计)
+     *
+     * 去重规则：连续相同的行合并为 1 条 + " (xN)"
+     */
+    @Synchronized
+    fun readSince(sinceSeq: Int): Triple<List<String>, Int, Int> {
+        val all = try {
+            if (privateFile.exists()) privateFile.readLines().takeLast(MAX_LINES)
+            else buffer.toList()
+        } catch (t: Throwable) {
+            return Triple(emptyList(), sinceSeq, 0)
+        }
+
+        if (all.isEmpty()) return Triple(emptyList(), 0, 0)
+        val start = (sinceSeq + 1).coerceIn(0, all.size)
+        if (start >= all.size) return Triple(emptyList(), all.size - 1, 0)
+
+        val fresh = all.subList(start, all.size)
+
+        // ⭐ 去重：连续相同（去掉时间戳前缀后比较）合并
+        val out = ArrayList<String>()
+        var dup = 0
+        var i = 0
+        while (i < fresh.size) {
+            val cur = fresh[i]
+            val body = cur.substringAfter("] ", cur)   // 去时间+级别前缀
+            var n = 1
+            var j = i + 1
+            while (j < fresh.size) {
+                val nxt = fresh[j].substringAfter("] ", fresh[j])
+                if (nxt == body) { n++; j++ } else break
+            }
+            if (n > 1) {
+                out.add("$cur   (x$n)")
+                dup += n - 1
+            } else {
+                out.add(cur)
+            }
+            i = j
+        }
+        return Triple(out, all.size - 1, dup)
+    }
+
     /** 清空日志 */
     @Synchronized
     fun clear() {

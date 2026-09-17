@@ -62,6 +62,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var svLog: android.widget.ScrollView
     private lateinit var adapter: TaskAdapter
     private var refreshing = false
+    /** ⭐ v1.6.5 日志增量游标（-1 = 未初始化） */
+    private var logSeq: Int = -1
     /** 是否存在活跃（非终态）任务；用于自适应刷新间隔 */
     @Volatile private var hasActiveTask = false
 
@@ -132,6 +134,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnClearLog).setOnClickListener {
             showConfirmDialog("清除日志", "确认清除全部运行日志？", "清除", danger = true) {
                 LogStore.clear()
+                logSeq = -1                 // ⭐ 重置增量游标
+                tvLog.text = ""
                 refreshLog()
                 Toast.makeText(this, "日志已清除", Toast.LENGTH_SHORT).show()
             }
@@ -1154,19 +1158,34 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- 日志 ----------------
 
+    /**
+     * 刷新日志（v1.6.5：增量追加 + 去重；不整段重载）
+     *
+     *   · 只取「上次之后的新行」
+     *   · 连续重复行合并为 1 条 + (xN)
+     *   · 内容无变化则跳过
+     */
     private fun refreshLog() {
         lifecycleScope.launch {
             try {
-                val log = withContext(Dispatchers.IO) { LogStore.readAll() }
-                val text = if (log.isBlank()) "（暂无日志）" else log
-                // ⭐ v1.6.2：内容没变则不更新（避免频繁重绘）
-                if (tvLog.tag == text) return@launch
-                tvLog.tag = text
-                tvLog.text = text
-                // ⭐ 关键修复：滚到「最底部」（最新日志在下面）
-                svLog.post {
-                    svLog.fullScroll(android.view.View.FOCUS_DOWN)
+                val (fresh, newSeq, dup) = withContext(Dispatchers.IO) {
+                    try { LogStore.readSince(logSeq) } catch (t: Throwable) {
+                        Triple(emptyList<String>(), logSeq, 0)
+                    }
                 }
+                if (fresh.isEmpty()) return@launch
+
+                // 首次加载：清空占位
+                if (logSeq < 0) tvLog.text = ""
+
+                val sb = StringBuilder(tvLog.text?.toString() ?: "")
+                fresh.forEach { sb.append(it).append('\n') }
+                tvLog.text = sb.toString()
+                logSeq = newSeq
+
+                // 滚到底部（最新在下面）
+                svLog.post { svLog.fullScroll(android.view.View.FOCUS_DOWN) }
+                if (dup > 0) LogStore.d(TAG, "日志去重 $dup 行")
             } catch (t: Throwable) {
                 tvLog.text = "日志刷新失败: ${t.message}"
             }
@@ -1192,15 +1211,15 @@ class MainActivity : AppCompatActivity() {
                 try {
                     // 任务列表刷新（内部更新 hasActiveTask 字段）
                     refreshTasks()
-                    // ⭐ v1.6.2：日志降频（6 周期一次；内容不变时 refreshLog 内部已跳过）
-                    if (tick % 6 == 0) refreshLog()
+                    // ⭐ v1.6.5：日志每轮都「查」，但只追加新行（无变化零成本）
+                    refreshLog()
                     tick++
                 } catch (t: Throwable) {
                     LogStore.e(TAG, "自动刷新异常: ${t.message}")
                 }
                 // ⚠️ 自适应刷新：有活跃任务时 1s 高频（进度可见），
                 //    全部终态时降到 5s（省电、省 IO，避免空转扫目录）。
-                delay(if (hasActiveTask) 1000L else 5000L)
+                delay(if (hasActiveTask) 1500L else 5000L)
             }
         }
     }
