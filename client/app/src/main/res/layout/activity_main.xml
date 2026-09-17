@@ -19,6 +19,16 @@
         android:text="Shizuku 状态检查中..."
         android:textSize="13sp"
         android:paddingTop="6dp"
+        android:paddingBottom="2dp" />
+
+    <!-- Termux 守护状态（读取心跳文件） -->
+    <TextView
+        android:id="@+id/tvTermuxStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Termux 状态检查中..."
+        android:textSize="13sp"
+        android:paddingTop="2dp"
         android:paddingBottom="6dp" />
 
     <LinearLayout
