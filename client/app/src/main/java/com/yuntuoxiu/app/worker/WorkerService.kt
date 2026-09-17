@@ -14,68 +14,52 @@ import com.yuntuoxiu.app.data.TaskRepository
 import kotlinx.coroutines.*
 
 /**
- * WorkerService：后台轮询所有活跃任务的 action 队列并执行。
+ * WorkerService：后台轮询任务队列
  *
- * ⚠️ 稳定性加固（防闪退）：
- *  1) 全流程 try/catch，任何异常都记录日志而不是崩溃
- *  2) Android 10+ 显式指定 foregroundServiceType（dataSync）
- *  3) 通知构建失败时用最简通知兜底
- *  4) 所有关键节点写入 LogStore（App 内可查看）
+ * 稳定性 + 可观测性：
+ *  1) 全流程 try/catch，不崩溃
+ *  2) 定期心跳日志（每 10 次轮询一次），避免「看起来没动静」
+ *  3) 通知常驻，显示运行状态
  */
 class WorkerService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollingJob: Job? = null
+    private var heartbeat = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        try {
-            LogStore.i(TAG, "WorkerService.onCreate")
-        } catch (t: Throwable) {
-            Log.e(TAG, "onCreate log failed", t)
-        }
+        try { LogStore.i(TAG, "WorkerService.onCreate") } catch (_: Throwable) {}
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 先确保前台通知（失败也不能崩）
         try {
             startForegroundCompat()
-            LogStore.i(TAG, "前台服务已启动")
+            LogStore.i(TAG, "前台服务已启动（通知栏可见）")
         } catch (t: Throwable) {
-            LogStore.e(TAG, "startForeground 失败（将继续后台运行）: ${t.message}")
+            LogStore.e(TAG, "startForeground 失败: ${t.message}")
         }
-
-        // 启动轮询（带异常保护）
         try {
             startPolling()
-            LogStore.i(TAG, "轮询已启动")
         } catch (t: Throwable) {
             LogStore.e(TAG, "启动轮询失败: ${t.message}")
         }
-
         return START_STICKY
     }
 
-    /** 兼容各 Android 版本的前台服务启动 */
     private fun startForegroundCompat() {
         val notif = buildNotificationSafe()
-        // ⚠️ 关键修复：Android 14 (targetSdk 34) 下，如果传了 foregroundServiceType
-        //    参数，系统会校验对应的 FOREGROUND_SERVICE_<TYPE> 权限；
-        //    Manifest 未声明该权限时会抛 SecurityException 崩溃。
-        //    这里统一用 2 参版本（不指定 type），由 Manifest 的 service 声明决定，
-        //    避免权限校验导致的崩溃。
+        // Android 14：用 2 参避免 FOREGROUND_SERVICE_<TYPE> 权限校验
         startForeground(NOTIF_ID, notif)
     }
 
-    /** 构建通知；任何失败都回退到最简通知 */
     private fun buildNotificationSafe(): Notification {
         return try {
             buildNotification()
         } catch (t: Throwable) {
-            LogStore.w(TAG, "构建通知失败，用兜底通知: ${t.message}")
-            // 最简兜底：不依赖任何自定义资源
+            LogStore.w(TAG, "通知构建失败，用兜底: ${t.message}")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 Notification.Builder(this, ensureChannel())
                     .setContentTitle("云脱修")
@@ -94,32 +78,43 @@ class WorkerService : Service() {
     }
 
     private fun ensureChannel(): String {
-        val ch = NotificationChannel(
-            CHANNEL_ID, "云脱修 Worker", NotificationManager.IMPORTANCE_LOW)
-        (getSystemService(NOTIFICATION_SERVICE) as? NotificationManager)
-            ?.createNotificationChannel(ch)
+        try {
+            val ch = NotificationChannel(
+                CHANNEL_ID, "云脱修 Worker", NotificationManager.IMPORTANCE_LOW)
+            (getSystemService(NOTIFICATION_SERVICE) as? NotificationManager)
+                ?.createNotificationChannel(ch)
+        } catch (_: Throwable) {}
         return CHANNEL_ID
     }
 
     private fun startPolling() {
-        if (pollingJob?.isActive == true) return
+        if (pollingJob?.isActive == true) {
+            LogStore.i(TAG, "轮询已在运行，忽略重复启动")
+            return
+        }
         pollingJob = scope.launch {
             LogStore.i(TAG, "轮询循环开始（间隔 ${POLL_INTERVAL_MS}ms）")
             while (isActive) {
                 try {
-                    val activeTasks = TaskRepository.listTasks().filter { !it.isTerminal }
-                    if (activeTasks.isNotEmpty()) {
-                        LogStore.i(TAG, "发现 ${activeTasks.size} 个活跃任务")
+                    val tasks = TaskRepository.listTasks()
+                    val active = tasks.filter { !it.isTerminal }
+
+                    // 心跳：每 10 次（约 30s）打一次，证明活着
+                    heartbeat++
+                    if (heartbeat % 10 == 0) {
+                        LogStore.i(TAG, "心跳 #$heartbeat | 任务总数=${tasks.size} 活跃=${active.size}")
                     }
-                    for (task in activeTasks) {
-                        processTask(task)
+
+                    if (active.isNotEmpty()) {
+                        LogStore.i(TAG, "发现 ${active.size} 个活跃任务")
+                        for (task in active) processTask(task)
                     }
                 } catch (t: Throwable) {
                     LogStore.e(TAG, "轮询异常: ${t.message}")
-                    Log.e(TAG, "轮询异常", t)
                 }
                 delay(POLL_INTERVAL_MS)
             }
+            LogStore.i(TAG, "轮询循环结束")
         }
     }
 
@@ -128,6 +123,7 @@ class WorkerService : Service() {
             val queue = ActionQueue(task.taskId)
             val executor = ActionExecutor(this, task.taskId)
             val pending = queue.pendingPayloads()
+            if (pending.isEmpty()) return
             for ((payload, respFile) in pending) {
                 LogStore.i(TAG, "[${task.taskId}] 执行 ${payload.action}")
                 val resp = executor.execute(payload)
@@ -149,7 +145,7 @@ class WorkerService : Service() {
         }
         return builder
             .setContentTitle("云脱修")
-            .setContentText("后台脱壳任务运行中")
+            .setContentText("后台任务运行中（轮询中）")
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .build()
@@ -160,8 +156,7 @@ class WorkerService : Service() {
             LogStore.i(TAG, "WorkerService.onDestroy")
             pollingJob?.cancel()
             scope.cancel()
-        } catch (_: Throwable) {
-        }
+        } catch (_: Throwable) {}
         super.onDestroy()
     }
 
