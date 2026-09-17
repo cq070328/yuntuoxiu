@@ -30,12 +30,14 @@ object TaskRepository {
     fun listTasks(): List<TaskMetaView> {
         if (!tasksRoot.exists()) return emptyList()
         val out = mutableListOf<TaskMetaView>()
-        tasksRoot.listFiles()?.forEach { dir ->
-            if (!dir.isDirectory) return@forEach
+        // 显式声明 Array<File> 类型，避免 listFiles() 重载歧义
+        val dirs: Array<File>? = tasksRoot.listFiles()
+        if (dirs == null) return out
+        for (dir in dirs) {
+            if (!dir.isDirectory) continue
             val metaFile = File(dir, "meta/task_meta.json")
-            if (!metaFile.exists()) return@forEach
+            if (!metaFile.exists()) continue
             try {
-                // Gson.fromJson 可能返回 null（JSON 非法/类型不符），必须判空
                 val parsed = gson.fromJson(metaFile.readText(), TaskMetaView::class.java)
                 if (parsed != null) out.add(parsed)
             } catch (e: Exception) {
@@ -183,16 +185,16 @@ object TaskRepository {
      */
     fun findLatestTaskId(): String? {
         return try {
-            // 用 list() 返回 Array<String>，避免 listFiles() 的重载歧义
-            val names = File(tasksRoot).list() ?: return null
-            var best: String? = null
-            for (n in names) {
-                if (!n.startsWith("t_")) continue
-                // 只认目录
-                if (!File(tasksRoot, n).isDirectory) continue
-                if (best == null || n > best!!) best = n
+            // 显式声明 Array<File> 类型，避免 listFiles() 重载歧义
+            val dirs: Array<File>? = tasksRoot.listFiles()
+            if (dirs == null) return null
+            var best: File? = null
+            for (f in dirs) {
+                if (!f.isDirectory) continue
+                if (!f.name.startsWith("t_")) continue
+                if (best == null || f.name > best!!.name) best = f
             }
-            best
+            best?.name
         } catch (t: Throwable) {
             null
         }
