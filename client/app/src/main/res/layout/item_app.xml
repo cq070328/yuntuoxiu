@@ -1,10 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 已安装应用列表项（v1.6.6：圆角卡片 + ripple + 深色配色） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:layout_marginStart="8dp"
+    android:layout_marginEnd="8dp"
+    android:layout_marginTop="6dp"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:padding="10dp">
+    android:padding="12dp"
+    android:background="@drawable/bg_task_item"
+    android:clickable="true"
+    android:focusable="true">
 
     <ImageView
         android:id="@+id/ivAppIcon"
@@ -19,12 +26,13 @@
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <!-- ⚠️ 不硬编码 textColor，跟随主题（浅色=黑字，深色=白字） -->
         <TextView
             android:id="@+id/tvAppName"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="15sp"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#E6EDF3"
             android:singleLine="true"
             android:ellipsize="end" />
 
@@ -32,10 +40,19 @@
             android:id="@+id/tvAppPkg"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="11sp"
-            android:alpha="0.6"
+            android:layout_marginTop="2dp"
+            android:textSize="10sp"
+            android:textColor="#8B949E"
             android:singleLine="true"
             android:ellipsize="middle" />
     </LinearLayout>
+
+    <!-- 右侧箭头（提示可点） -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:textColor="#6E7681"
+        android:text="›" />
 
 </LinearLayout>

@@ -75,6 +75,13 @@ class MainActivity : AppCompatActivity() {
         val icon: Drawable?
     )
 
+    /** ⭐ v1.6.6 列表项 ViewHolder（滚动复用，避免 findViewById） */
+    private class AppViewHolder(
+        val icon: ImageView,
+        val name: TextView,
+        val pkg: TextView
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -1038,8 +1045,20 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(editSearch)
 
-        // 列表
-        val listView = ListView(this)
+        // 列表（v1.6.6：ViewHolder + 滚动优化）
+        val listView = ListView(this).apply {
+            // ⭐ 滚动优化
+            isFastScrollEnabled = true                  // 快速滚动条
+            scrollingCacheEnabled = true                // 滚动缓存（减少重绘）
+            isSmoothScrollbarEnabled = true
+            setCacheColorHint(0x00000000)               // 拖动不变黑
+            divider = null                              // 无分隔线（卡片自带边距）
+            dividerHeight = 0
+            setPadding(0, dp(4), 0, dp(8))
+            clipToPadding = false
+            // 弹性滚动手感
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        }
         container.addView(listView, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -1050,16 +1069,26 @@ class MainActivity : AppCompatActivity() {
             override fun getItemId(position: Int) = position.toLong()
 
             override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-                val v = convertView ?: LayoutInflater.from(this@MainActivity)
-                    .inflate(R.layout.item_app, parent, false)
+                // ⭐ v1.6.6 ViewHolder 模式（避免每次 findViewById）
+                val holder: AppViewHolder
+                val v: View
+                if (convertView == null) {
+                    v = LayoutInflater.from(this@MainActivity)
+                        .inflate(R.layout.item_app, parent, false)
+                    holder = AppViewHolder(
+                        v.findViewById(R.id.ivAppIcon),
+                        v.findViewById(R.id.tvAppName),
+                        v.findViewById(R.id.tvAppPkg)
+                    )
+                    v.tag = holder
+                } else {
+                    v = convertView
+                    holder = v.tag as AppViewHolder
+                }
                 val item = shown[position]
-                val iv = v.findViewById<ImageView>(R.id.ivAppIcon)
-                val tvName = v.findViewById<TextView>(R.id.tvAppName)
-                val tvPkg = v.findViewById<TextView>(R.id.tvAppPkg)
-                // 名字兜底
-                tvName.text = item.label.ifBlank { item.packageName }
-                tvPkg.text = item.packageName
-                if (item.icon != null) iv.setImageDrawable(item.icon) else iv.setImageDrawable(null)
+                holder.name.text = item.label.ifBlank { item.packageName }
+                holder.pkg.text = item.packageName
+                holder.icon.setImageDrawable(item.icon)
                 return v
             }
         }
