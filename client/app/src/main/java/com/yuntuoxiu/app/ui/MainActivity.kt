@@ -100,10 +100,18 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<View>(R.id.btnGrantShizuku).setOnClickListener {
             if (ShizukuClient.isGranted()) {
-                Toast.makeText(this, "Shizuku 已授权", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "✅ Shizuku 已授权", Toast.LENGTH_SHORT).show()
             } else {
+                // v1.6.1：友好指引（重装 APP 会丢授权，需重新授予）
                 ShizukuClient.requestPermission()
-                Toast.makeText(this, "请在 Shizuku Manager 中授权", Toast.LENGTH_LONG).show()
+                showResultDialog("需要 Shizuku 授权",
+                    "请在弹窗中点「允许」。若没弹窗或点错，请手动：\n\n" +
+                    "1. 打开 Shizuku Manager\n" +
+                    "2. 找到「云脱修」\n" +
+                    "3. 打开开关授予权限\n" +
+                    "4. 返回本应用\n\n" +
+                    "⚠️ 提示：重装 APP 会丢失授权（UID 变化），\n" +
+                    "   需重新授权一次。之后覆盖安装可保留。")
             }
         }
 
@@ -152,68 +160,45 @@ class MainActivity : AppCompatActivity() {
         // 版本号显示
         findViewById<TextView>(R.id.tvVersion)?.text = "v" + appVersionName()
 
-        // 【v1.5.3】启动/停止 Termux 完整后端
-        //   单击 = 启动完整后端（后端调度器 + 构建 worker）
-        //   长按 = 停止
+        // 【v1.6.1】本地引擎按钮：
+        //   单击 = 检查本地引擎（NPatch素材/脱壳模块/注入器）
+        //   长按 = 工具面板
         findViewById<View>(R.id.btnStartDaemon)?.apply {
             setOnClickListener {
-                if (!TermuxBridge.isTermuxInstalled(this@MainActivity)) {
-                    Toast.makeText(this@MainActivity, "请先安装 Termux", Toast.LENGTH_LONG).show()
-                    return@setOnClickListener
-                }
-                val (declared, hint) = TermuxBridge.runCommandPermissionHint(this@MainActivity)
-                if (!declared) {
-                    showResultDialog("Termux 联动未就绪", hint + "\n\n解决：\n" +
-                                "1. 安装 Termux\n" +
-                                "2. Termux 里跑一次: bash /sdcard/MT2/apks/termux_quick.sh\n" +
-                                "   （会安装工具并开启 allow-external-apps）")
-                    return@setOnClickListener
-                }
-                // 真实通道探针（比权限检查可靠）：尝试让 Termux 写一个标记文件
-                Toast.makeText(this@MainActivity, "正在检查 Termux 后端…", Toast.LENGTH_SHORT).show()
                 lifecycleScope.launch {
-                    // ⚠️ 先看后端是否已在线（心跳）：在线则无需重启，
-                    //    避免每次都通过命令桥拉起 start_all 造成多实例。
-                    val (alreadyOnline, desc) = withContext(Dispatchers.IO) {
-                        TermuxBridge.readDaemonStatus()
+                    val rep = withContext(Dispatchers.IO) {
+                        val ws = "/sdcard/MT2/apks"
+                        val items = listOf(
+                            "NPatch素材" to "$ws/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex",
+                            "脱壳模块" to "$ws/ytx-tools/ytxdump-module.apk",
+                            "注入器" to "$ws/ytx_npatch_inject.sh",
+                            "DEX替换" to "$ws/ytx-dex-replace.py",
+                            "对齐工具" to "$ws/ytx-zipalign.py",
+                            "去壳清理" to "$ws/ytx-unpack-clean.py",
+                            "启动诊断" to "$ws/ytx_diag_launch.sh",
+                            "云端构建" to "$ws/ytx-cloud-build.py",
+                            "token" to "$ws/yuntuoxiu-dev/token.txt"
+                        )
+                        val sb = StringBuilder("== 本地引擎检查 ==\n\n")
+                        var okN = 0
+                        items.forEach { (name, path) ->
+                            val ok = File(path).exists()
+                            if (ok) okN++
+                            sb.append("${if (ok) "✅" else "❌"} $name\n")
+                        }
+                        sb.append("\n就绪：$okN/${items.size}\n\n")
+                        sb.append("说明：\n")
+                        sb.append("· 前 3 项是「脱壳注入」必需\n")
+                        sb.append("· token 是「云端构建」必需\n")
+                        if (okN == items.size) sb.append("\n🎉 全部就绪，可全自动脱壳！")
+                        sb.toString()
                     }
-                    if (alreadyOnline) {
-                        Toast.makeText(this@MainActivity,
-                            "✅ Termux 后端已在线（$desc），无需重启", Toast.LENGTH_LONG).show()
-                        withContext(Dispatchers.IO) { refreshTermuxStatus() }
-                        return@launch
-                    }
-                    // 未在线 -> 尝试启动
-                    withContext(Dispatchers.IO) {
-                        TermuxBridge.startDaemon(this@MainActivity)
-                    }
-                    val chanOk = withContext(Dispatchers.IO) {
-                        TermuxBridge.probeRunCommandChannel(this@MainActivity)
-                    }
-                    if (chanOk) {
-                        Toast.makeText(this@MainActivity,
-                            "✅ 已请求启动完整后端，通道可用", Toast.LENGTH_LONG).show()
-                        withContext(Dispatchers.IO) { refreshTermuxStatus() }
-                    } else {
-                        showResultDialog("Termux 通道未响应", "命令已发出，但 Termux 未响应。常见原因：\n\n" +
-                                    "1. Termux 未开启 allow-external-apps\n" +
-                                    "   在 Termux 里执行：\n" +
-                                    "   mkdir -p ~/.termux && echo \"allow-external-apps=true\" >> ~/.termux/termux.properties && termux-reload-settings\n\n" +
-                                    "2. Termux 从未启动过（先手动打开一次）\n\n" +
-                                    "3. Termux 版本过旧，请更新")
-                    }
+                    refreshEngineStatus()
+                    showResultDialog("本地引擎", rep)
                 }
             }
             setOnLongClickListener {
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("停止 Termux 后端")
-                    .setMessage("确认停止 Termux 上的完整后端？")
-                    .setPositiveButton("停止") { _, _ ->
-                        TermuxBridge.stopDaemon(this@MainActivity)
-                        Toast.makeText(this@MainActivity, "已请求停止", Toast.LENGTH_SHORT).show()
-                    }
-                    .setNegativeButton("取消", null)
-                    .show()
+                showToolsPanel()
                 true
             }
         }
@@ -230,58 +215,90 @@ class MainActivity : AppCompatActivity() {
         else "⚠️ Shizuku 未授权"
         findViewById<TextView>(R.id.tvShizukuBadge)?.setTextColor(
             if (ShizukuClient.isGranted()) 0xFF3FB950.toInt() else 0xFFF85149.toInt())
-        refreshTermuxStatus()
+        refreshEngineStatus()
         refreshBackendStatus()   // v1.6：后端状态
         refreshTasks()
         refreshLog()
     }
 
-    /** 刷新构建服务状态显示（读取心跳文件）。 */
-    private fun refreshTermuxStatus() {
+    /** 刷新「本地引擎」状态（v1.6.1：不再依赖 Termux）。
+     *
+     *  检查项（都是「本地/云端」能力）：
+     *    · NPatch 素材（CLI 注入必需）
+     *    · 脱壳模块（Xposed）
+     *    · 构建后端偏好
+     *    · token（云端）
+     */
+    private fun refreshEngineStatus() {
         try {
             val tv = findViewById<TextView>(R.id.tvTermuxStatus) ?: return
             val badge = findViewById<TextView>(R.id.tvServiceBadge)
-            if (!TermuxBridge.isTermuxInstalled(this)) {
-                tv.text = "构建服务：未安装 Termux（可选容器/云端）"
-                badge?.setTextColor(0xFFF0883E.toInt())
-                return
+
+            val npatch = File("/sdcard/MT2/apks/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex").exists()
+            val module = File("/sdcard/MT2/apks/ytx-tools/ytxdump-module.apk").exists()
+            val injector = File("/sdcard/MT2/apks/ytx_npatch_inject.sh").exists()
+            val token = File("/sdcard/MT2/apks/yuntuoxiu-dev/token.txt").exists()
+
+            val ready = npatch && module && injector
+            tv.text = if (ready) {
+                "本地引擎：✅ 就绪（注入${if (token) " + 云端" else ""}）"
+            } else {
+                "本地引擎：⚠️ 缺 " + listOfNotNull(
+                    if (!npatch) "NPatch素材" else null,
+                    if (!module) "脱壳模块" else null,
+                    if (!injector) "注入器" else null
+                ).joinToString("/")
             }
-            val (online, desc) = TermuxBridge.readDaemonStatus()
-            tv.text = if (online) "构建服务：✅ $desc" else "构建服务：⚠️ $desc"
-            badge?.setTextColor(
-                if (online) 0xFF3FB950.toInt() else 0xFFF0883E.toInt())
+            badge?.setTextColor(if (ready) 0xFF3FB950.toInt() else 0xFFF0883E.toInt())
         } catch (t: Throwable) {
-            LogStore.w(TAG, "刷新构建服务状态失败: ${t.message}")
+            LogStore.w(TAG, "刷新引擎状态失败: ${t.message}")
         }
     }
 
     /**
-     * 诊断 Termux 联动（长按 Termux 状态行触发，或从菜单调用）。
-     * 输出：安装状态 + 权限声明 + 文件检查 + 通道探针。
+     * v1.6.1 环境诊断（长按「本地引擎」行触发）。
+     * 输出：Shizuku + 本地引擎 + 工作区 + 后端偏好
      */
     private fun diagnoseTermux() {
         lifecycleScope.launch {
             val report = withContext(Dispatchers.IO) {
+                val ws = "/sdcard/MT2/apks"
                 val sb = StringBuilder()
-                sb.append("== 云脱修 Termux 诊断 ==\n\n")
-                sb.append("1) Termux 已安装: ${TermuxBridge.isTermuxInstalled(this@MainActivity)}\n")
-                sb.append("2) RUN_COMMAND: ${TermuxBridge.describeRunCommandPermission(this@MainActivity)}\n")
-                val ws = java.io.File("/sdcard/MT2/apks")
-                sb.append("3) 工作区可读: ${ws.exists()}\n")
-                for (f in listOf("termux_start_all.sh", "termux_backend.sh",
-                        "termux_worker.sh", "termux_quick.sh")) {
-                    sb.append("   - $f: ${java.io.File(ws, f).exists()}\n")
+                sb.append("== 云脱修 环境诊断 ==\n\n")
+
+                sb.append("[Shizuku]\n")
+                sb.append("  已授权: ${ShizukuClient.isGranted()}\n\n")
+
+                sb.append("[本地引擎]\n")
+                val engine = listOf(
+                    "NPatch素材" to "$ws/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex",
+                    "脱壳模块" to "$ws/ytx-tools/ytxdump-module.apk",
+                    "注入器" to "$ws/ytx_npatch_inject.sh",
+                    "DEX替换" to "$ws/ytx-dex-replace.py",
+                    "对齐" to "$ws/ytx-zipalign.py",
+                    "去壳" to "$ws/ytx-unpack-clean.py",
+                    "诊断" to "$ws/ytx_diag_launch.sh",
+                    "云端" to "$ws/ytx-cloud-build.py",
+                    "token" to "$ws/yuntuoxiu-dev/token.txt"
+                )
+                engine.forEach { (n, p) ->
+                    sb.append("  ${if (File(p).exists()) "✅" else "❌"} $n\n")
                 }
-                val hb = java.io.File(ws, "unpackcloud/logs/termux_heartbeat.json")
-                sb.append("4) worker 心跳文件: ${hb.exists()}\n")
-                val hb2 = java.io.File(ws, "unpackcloud/logs/termux_backend_heartbeat.json")
-                sb.append("5) backend 心跳文件: ${hb2.exists()}\n")
-                sb.append("\n6) 通道探针（写标记文件）…\n")
-                val chan = TermuxBridge.probeRunCommandChannel(this@MainActivity)
-                sb.append("   -> ${if (chan) "✅ 通道可用" else "❌ 无响应"}\n")
+
+                sb.append("\n[工作区]\n")
+                sb.append("  可读: ${File(ws).exists()}\n")
+                sb.append("  任务数: ${File("$ws/unpackcloud/tasks").listFiles()?.size ?: 0}\n")
+
+                sb.append("\n[后端偏好]\n")
+                sb.append("  ${readBackendPref()}\n")
+
+                sb.append("\n[可选环境]\n")
+                sb.append("  Termux: ${TermuxBridge.isTermuxInstalled(this@MainActivity)}\n")
+                sb.append("  容器: ${File("/root/ytx-tools/apktool.jar").exists()}\n")
+
                 sb.toString()
             }
-            showResultDialog("Termux 诊断结果", report)
+            showResultDialog("环境诊断", report)
         }
     }
 
@@ -619,19 +636,26 @@ class MainActivity : AppCompatActivity() {
     private fun toolEnvCheck() {
         lifecycleScope.launch {
             val rep = withContext(Dispatchers.IO) {
+                val ws = "/sdcard/MT2/apks"
                 val sb = StringBuilder("== 云脱修 环境自检 ==\n\n")
-                sb.append("1) Shizuku: ${ShizukuClient.isGranted()}\n")
-                sb.append("2) Termux: ${TermuxBridge.isTermuxInstalled(this@MainActivity)}\n")
-                sb.append("3) token.txt: ${File("/sdcard/MT2/apks/yuntuoxiu-dev/token.txt").exists()}\n")
-                sb.append("4) 工作区: ${File("/sdcard/MT2/apks").exists()}\n")
-                val tools = listOf("ytx-cloud-build.py", "ytx-dex-replace.py",
-                    "ytx-zipalign.py", "ytx-unpack-clean.py", "ytx_diag_launch.sh")
-                sb.append("5) 工具脚本:\n")
-                tools.forEach { f ->
-                    sb.append("   - $f: ${File("/sdcard/MT2/apks", f).exists()}\n")
-                }
-                sb.append("6) 后端偏好: ${readBackendPref()}\n")
-                sb.append("7) 模块源码: ${File("/sdcard/MT2/apks/ytx_dump_module").exists()}\n")
+                sb.append("[核心]\n")
+                sb.append("  ${if (ShizukuClient.isGranted()) "✅" else "❌"} Shizuku 已授权\n")
+                sb.append("  ${if (File("$ws/yuntuoxiu-dev/token.txt").exists()) "✅" else "❌"} token.txt\n")
+                sb.append("  ${if (File("$ws/ytx-tools/npatch_assets").exists()) "✅" else "❌"} NPatch素材\n")
+                sb.append("  ${if (File("$ws/ytx-tools/ytxdump-module.apk").exists()) "✅" else "❌"} 脱壳模块\n\n")
+
+                sb.append("[工具链]\n")
+                listOf("ytx_npatch_inject.sh", "ytx-dex-replace.py", "ytx-zipalign.py",
+                    "ytx-unpack-clean.py", "ytx-cloud-build.py", "ytx_diag_launch.sh")
+                    .forEach { f ->
+                        sb.append("  ${if (File("$ws/$f").exists()) "✅" else "❌"} $f\n")
+                    }
+
+                sb.append("\n[构建后端]\n")
+                sb.append("  偏好: ${readBackendPref()}\n")
+                sb.append("  ${if (File("$ws/yuntuoxiu-dev/token.txt").exists()) "✅" else "❌"} 云端（GitHub）\n")
+                sb.append("  ${if (File("/root/ytx-tools/apktool.jar").exists()) "✅" else "❌"} 容器（Operit）\n")
+                sb.append("  ${if (TermuxBridge.isTermuxInstalled(this@MainActivity)) "✅" else "❌"} Termux\n")
                 sb.toString()
             }
             showResultDialog("环境自检", rep)

@@ -132,7 +132,7 @@
                     android:text="选择" />
             </LinearLayout>
 
-            <!-- 构建服务 -->
+            <!-- 本地引擎 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -153,19 +153,20 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="构建服务：检测中…"
+                    android:text="本地引擎：检测中…"
                     android:textSize="12sp"
                     android:textColor="#C9D1D9" />
 
                 <Button
                     android:id="@+id/btnStartDaemon"
+                    style="@style/YtxButton.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="30dp"
                     android:minWidth="0dp"
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"
                     android:textSize="11sp"
-                    android:text="启动" />
+                    android:text="检查" />
             </LinearLayout>
         </LinearLayout>
     </androidx.cardview.widget.CardView>
