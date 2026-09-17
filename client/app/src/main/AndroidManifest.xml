@@ -18,6 +18,14 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- 与 Termux 联动：允许 Termux 执行命令 -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <!-- Android 11+ 查询 Termux（包可见性） -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
     <!-- Worker 前台服务：
          ⚠️ Android 14 (targetSdk 34) 要求：
            声明了 service 的 foregroundServiceType 就必须同时声明对应权限，
