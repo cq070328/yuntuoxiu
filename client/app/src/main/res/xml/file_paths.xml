@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 路径（v1.6.4）：允许分享工作区 + 任务目录的 APK -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 外部存储根（工作区产物：/sdcard/MT2/apks/云脱修-*.apk） -->
+    <external-path name="ext_root" path="." />
+    <!-- 外部私有目录 -->
+    <external-files-path name="ext_files" path="." />
+    <!-- 缓存目录（安装副本） -->
+    <cache-path name="cache" path="." />
+    <!-- 内部文件 -->
+    <files-path name="files" path="." />
+</paths>

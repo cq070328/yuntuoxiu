@@ -31,6 +31,12 @@ class TaskDetailActivity : AppCompatActivity() {
     private lateinit var btnCancel: Button
     private lateinit var btnRefresh: Button
 
+    // ⭐ v1.6.4 产物卡片
+    private var cardOutput: android.view.View? = null
+    private var tvOutputPath: TextView? = null
+    private var btnInstall: android.view.View? = null
+    private var currentOutput: String? = null
+
     private var taskId: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,10 +62,40 @@ class TaskDetailActivity : AppCompatActivity() {
             tvLog = findViewById(R.id.tvLog)
             btnCancel = findViewById(R.id.btnCancel)
             btnRefresh = findViewById(R.id.btnRefresh)
+            // ⭐ v1.6.4 产物卡片
+            cardOutput = findViewById(R.id.cardOutput)
+            tvOutputPath = findViewById(R.id.tvOutputPath)
+            btnInstall = findViewById(R.id.btnInstall)
         } catch (t: Throwable) {
             LogStore.e(TAG, "视图绑定失败: ${t.message}")
             finish()
             return
+        }
+
+        // ⭐ 长按路径 → 复制
+        tvOutputPath?.setOnLongClickListener {
+            val p = currentOutput
+            if (!p.isNullOrBlank()) {
+                try {
+                    val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("apk_path", p))
+                    Toast.makeText(this, "✅ 路径已复制", Toast.LENGTH_SHORT).show()
+                } catch (t: Throwable) {
+                    Toast.makeText(this, "复制失败: ${t.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            true
+        }
+
+        // ⭐ 圆形图标 → 本地安装
+        btnInstall?.setOnClickListener {
+            val p = currentOutput
+            if (p.isNullOrBlank()) {
+                Toast.makeText(this, "暂无产物", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            installApk(p)
         }
 
         btnRefresh.setOnClickListener {
@@ -156,6 +192,9 @@ class TaskDetailActivity : AppCompatActivity() {
                 // 修复轨迹（安全解析）
                 tvTrace.text = buildTrace(task)
 
+                // ⭐ v1.6.4 产物卡片
+                updateOutputCard(task)
+
                 // 日志
                 tvLog.text = if (log.isBlank()) "（无日志）" else log.takeLast(8000)
             } catch (t: Throwable) {
@@ -207,6 +246,89 @@ class TaskDetailActivity : AppCompatActivity() {
 
     private fun safeGetRaw(m: Map<*, *>, k: String): String =
         m[k]?.toString() ?: "-"
+
+    // ---------------- v1.6.4 产物相关 ----------------
+
+    /** 查找任务产物 APK（多候选路径） */
+    private fun findOutput(task: TaskMetaView?): String? {
+        val ws = "/sdcard/MT2/apks"
+        val tid = task?.taskId ?: taskId
+
+        // 候选（按优先级）
+        val cands = mutableListOf<String>()
+        cands += "$ws/云脱修-$tid.apk"
+        cands += "$ws/云脱修-$tid-oc.apk"
+        cands += "$ws/unpackcloud/tasks/$tid/build/云脱修-$tid.apk"
+        cands += "$ws/unpackcloud/tasks/$tid/build/signed.apk"
+        cands += "$ws/unpackcloud/tasks/$tid/build/out.apk"
+
+        for (p in cands) {
+            try {
+                val f = java.io.File(p)
+                if (f.exists() && f.length() > 1024) return p
+            } catch (_: Throwable) {}
+        }
+        return null
+    }
+
+    /** 更新产物卡片（有产物则显示，否则隐藏） */
+    private fun updateOutputCard(task: TaskMetaView?) {
+        try {
+            val p = findOutput(task)
+            currentOutput = p
+            if (p.isNullOrBlank()) {
+                cardOutput?.visibility = android.view.View.GONE
+            } else {
+                cardOutput?.visibility = android.view.View.VISIBLE
+                val sz = try { java.io.File(p).length() / 1024 } catch (_: Throwable) { 0L }
+                tvOutputPath?.text = "$p\n（$sz KB）"
+            }
+        } catch (t: Throwable) {
+            LogStore.w(TAG, "更新产物卡片失败: ${t.message}")
+        }
+    }
+
+    /** 本地安装 APK（优先 Shizuku；否则用系统 Installer） */
+    private fun installApk(path: String) {
+        lifecycleScope.launch {
+            Toast.makeText(this@TaskDetailActivity, "安装中…", Toast.LENGTH_SHORT).show()
+            // ① 优先 Shizuku（静默安装，替换）
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    val r = com.yuntuoxiu.app.shizuku.ShizukuClient
+                        .installApk(path, replace = true)
+                    r.getInt("code") == com.yuntuoxiu.app.shizuku.ShizukuErrorCodes.OK
+                } catch (t: Throwable) {
+                    LogStore.w(TAG, "Shizuku 安装失败: ${t.message}")
+                    false
+                }
+            }
+            if (ok) {
+                Toast.makeText(this@TaskDetailActivity,
+                    "✅ 已通过 Shizuku 安装", Toast.LENGTH_SHORT).show()
+                load()
+                return@launch
+            }
+            // ② 回退：系统安装器（让用户确认）
+            try {
+                val f = java.io.File(path)
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    this@TaskDetailActivity,
+                    "$packageName.fileprovider",
+                    f)
+                val i = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(i)
+            } catch (t: Throwable) {
+                Toast.makeText(this@TaskDetailActivity,
+                    "安装失败: ${t.message}\n路径已可复制，请手动安装",
+                    Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     companion object {
         private const val TAG = "TaskDetailActivity"
