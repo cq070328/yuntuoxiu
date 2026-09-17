@@ -45,18 +45,46 @@ object TaskStatusReporter {
             Log.w(TAG, "读取活跃任务失败", e)
             java.util.Collections.emptyList<com.yuntuoxiu.app.data.TaskMetaView>()
         }
-        if (active.isEmpty()) {
-            Log.i(TAG, "无活跃任务，跳过上报: $event")
+        // ⚠️ 修复：Shizuku 类事件只应影响「依赖 Shizuku 的阶段」的任务。
+        //    已完成 dump、进入修复/构建（由 Termux 接管）的任务不应被误杀。
+        val affected = active.filter { taskShouldFailOnShizukuEvent(it, event) }
+        if (affected.isEmpty()) {
+            Log.i(TAG, "无受影响任务，跳过上报: $event（活跃=${active.size}）")
             return
         }
-        active.forEach { task ->
+        affected.forEach { task ->
             try {
                 writeStatus(task.taskId, event, failCode, detail)
             } catch (e: Exception) {
                 Log.w(TAG, "上报失败 ${task.taskId}", e)
             }
         }
-        Log.i(TAG, "已上报 $event 到 ${active.size} 个活跃任务")
+        Log.i(TAG, "已上报 $event 到 ${affected.size}/${active.size} 个任务")
+    }
+
+    /**
+     * 判断某任务是否应因 Shizuku 事件失败。
+     *
+     * 规则：
+     *  - 本地骨架（local_）：不上报（无后端任务）。
+     *  - Shizuku 断连/权限回收：只影响仍需设备操作的状态
+     *    （CREATED / PRE_CHECKING / WAIT_CLIENT / DUMPING）；
+     *    已进入 REPAIRING/BUILDING 等由 Termux 接管的阶段不受影响。
+     */
+    private fun taskShouldFailOnShizukuEvent(
+        task: com.yuntuoxiu.app.data.TaskMetaView, event: String
+    ): Boolean {
+        if (task.taskId.startsWith("local_")) return false
+        // Shell 致命错误只与设备侧操作有关；构建阶段无关
+        val deviceDependentStates = setOf(
+            "CREATED", "PRE_CHECKING", "WAIT_CLIENT", "DUMPING", "UPLOADING"
+        )
+        // 权限/断连类事件：仅设备依赖阶段
+        if (event == EVENT_DISCONNECTED || event == EVENT_PERMISSION_REVOKED) {
+            return task.state in deviceDependentStates
+        }
+        // 其它事件：所有非终态
+        return true
     }
 
     /** 对单个任务上报 */
