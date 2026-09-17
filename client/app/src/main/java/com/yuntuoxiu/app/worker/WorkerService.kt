@@ -104,7 +104,10 @@ class WorkerService : Service() {
 
                     // ② 执行活跃任务的 action 指令
                     val tasks = TaskRepository.listTasks()
-                    val active = tasks.filter { !it.isTerminal }
+                    // ⚠️ 跳过 local_ 骨架任务（无真实指令，等后端接管后消失）
+                    val active = tasks.filter {
+                        !it.isTerminal && !it.taskId.startsWith("local_")
+                    }
 
                     heartbeat++
                     if (heartbeat % 100 == 0) {   // 每 100 次(≈5分钟)一次心跳
