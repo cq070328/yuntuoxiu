@@ -60,6 +60,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var svLog: android.widget.ScrollView
     private lateinit var adapter: TaskAdapter
     private var refreshing = false
+    /** 是否存在活跃（非终态）任务；用于自适应刷新间隔 */
+    @Volatile private var hasActiveTask = false
 
     /** 应用列表项 */
     private data class AppItem(
@@ -138,19 +140,43 @@ class MainActivity : AppCompatActivity() {
             TermuxBridge.openTermuxAtWorkspace(this)
         }
 
-        // 【新增】启动 Termux 守护进程
-        findViewById<View>(R.id.btnStartDaemon)?.setOnClickListener {
-            if (!TermuxBridge.isTermuxInstalled(this)) {
-                Toast.makeText(this, "请先安装 Termux", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-            val ok = TermuxBridge.startDaemon(this)
-            if (ok) {
-                Toast.makeText(this,
-                    "已请求 Termux 启动守护进程\n（首次需在 Termux 里跑 termux_setup.sh）",
+        // 【v1.5.3】启动/停止 Termux 完整后端
+        //   单击 = 启动完整后端（后端调度器 + 构建 worker）
+        //   长按 = 停止
+        findViewById<View>(R.id.btnStartDaemon)?.apply {
+            setOnClickListener {
+                if (!TermuxBridge.isTermuxInstalled(this@MainActivity)) {
+                    Toast.makeText(this@MainActivity, "请先安装 Termux", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                val (permOk, hint) = TermuxBridge.runCommandPermissionHint(this@MainActivity)
+                if (!permOk) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Termux 联动未就绪")
+                        .setMessage(hint + "\n\n解决：\n" +
+                                "1. 安装 Termux\n" +
+                                "2. Termux 里跑一次: bash /sdcard/MT2/apks/termux_bootstrap.sh\n" +
+                                "   （会安装工具并开启 allow-external-apps）")
+                        .setPositiveButton("知道了", null)
+                        .show()
+                    return@setOnClickListener
+                }
+                val ok = TermuxBridge.startDaemon(this@MainActivity)
+                Toast.makeText(this@MainActivity,
+                    if (ok) "已请求启动完整后端（后端+worker）" else "启动失败（检查 Termux 权限）",
                     Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(this, "启动失败（检查 Termux 权限设置）", Toast.LENGTH_LONG).show()
+            }
+            setOnLongClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("停止 Termux 后端")
+                    .setMessage("确认停止 Termux 上的完整后端？")
+                    .setPositiveButton("停止") { _, _ ->
+                        TermuxBridge.stopDaemon(this@MainActivity)
+                        Toast.makeText(this@MainActivity, "已请求停止", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+                true
             }
         }
 
@@ -164,8 +190,24 @@ class MainActivity : AppCompatActivity() {
         tvShizuku.text = if (ShizukuClient.isGranted())
             "✅ Shizuku 已授权（ABI: arm64-v8a）"
         else "⚠️ Shizuku 未授权"
+        refreshTermuxStatus()
         refreshTasks()
         refreshLog()
+    }
+
+    /** 刷新 Termux 守护状态显示（读取心跳文件）。 */
+    private fun refreshTermuxStatus() {
+        try {
+            val tv = findViewById<android.widget.TextView>(R.id.tvTermuxStatus) ?: return
+            if (!TermuxBridge.isTermuxInstalled(this)) {
+                tv.text = "⚠️ 未安装 Termux（无法执行 dump/修复/打包）"
+                return
+            }
+            val (online, desc) = TermuxBridge.readDaemonStatus()
+            tv.text = if (online) "✅ Termux $desc" else "⚠️ Termux $desc"
+        } catch (t: Throwable) {
+            LogStore.w(TAG, "刷新 Termux 状态失败: ${t.message}")
+        }
     }
 
     // ---------------- 任务长按菜单 ----------------
@@ -437,18 +479,22 @@ class MainActivity : AppCompatActivity() {
             var tick = 0
             while (true) {
                 try {
-                    // 任务列表刷新快（1s），日志刷新慢（3s）
+                    // 任务列表刷新（内部更新 hasActiveTask 字段）
                     refreshTasks()
+                    // 日志刷新慢（约 3 个周期一次）
                     if (tick % 3 == 0) refreshLog()
                     tick++
                 } catch (t: Throwable) {
                     LogStore.e(TAG, "自动刷新异常: ${t.message}")
                 }
-                delay(1000)
+                // ⚠️ 自适应刷新：有活跃任务时 1s 高频（进度可见），
+                //    全部终态时降到 5s（省电、省 IO，避免空转扫目录）。
+                delay(if (hasActiveTask) 1000L else 5000L)
             }
         }
     }
 
+    /** 刷新任务列表；返回值仅用于调用方判断是否需要高频刷新（此处简化处理）。 */
     private fun refreshTasks() {
         if (refreshing) return
         refreshing = true
@@ -463,6 +509,8 @@ class MainActivity : AppCompatActivity() {
             val deduped = dedupeLocalSkeleton(tasks)
             adapter.submit(deduped)
             tvTaskCount.text = "任务列表（${deduped.size}）"
+            // 记录是否有活跃任务，供自适应刷新使用
+            hasActiveTask = deduped.any { !it.isTerminal }
             refreshing = false
         }
     }
