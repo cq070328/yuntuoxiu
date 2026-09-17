@@ -97,10 +97,7 @@ object TaskRepository {
                     .getPackageArchiveInfo(dest.absolutePath, 0)?.versionName
             } catch (e: Exception) { null }
 
-            // 3) 【提速】本地创建任务骨架（立即出现在列表）
-            val localTid = createLocalTaskSkeleton(dest, pkg, verName)
-
-            // 4) 写 create 请求（后端接管，会用 idem_key 幂等对齐）
+            // 3) 写 create 请求
             val req = TaskCreateRequest(
                 apkPath = dest.absolutePath,
                 packageName = pkg ?: "",
@@ -110,44 +107,24 @@ object TaskRepository {
             val reqFile = File(uploadsRoot, "create_${UUID.randomUUID()}.req.json")
             reqFile.writeText(gson.toJson(req))
 
-            Log.i(TAG, "已提交: ${dest.absolutePath} (pkg=$pkg, local_tid=$localTid)")
+            // 4) 【核心提速】立即触发内置 AutoWatcher → 秒级创建正式任务
+            val created = try {
+                com.yuntuoxiu.app.worker.AutoWatcher.tick()
+            } catch (t: Throwable) {
+                Log.w(TAG, "AutoWatcher 触发失败: ${t.message}"); 0
+            }
+
+            if (created == 0) {
+                // 兜底：AutoWatcher 未创建（如已有同 APK 活跃任务），
+                // 仍保留请求文件，等 WorkerService 轮询再试
+                Log.i(TAG, "AutoWatcher 未创建新任务（可能已存在），请求已入队")
+            }
+
+            Log.i(TAG, "已提交: ${dest.absolutePath} (pkg=$pkg, created=$created)")
             SubmitResult.Success(dest.absolutePath)
         } catch (e: Exception) {
             SubmitResult.Failure(e.message ?: "提交失败")
         }
-    }
-
-    /**
-     * 本地创建任务骨架，让任务列表立即显示。
-     *
-     * 结构对齐后端：tasks/<tid>/meta/task_meta.json
-     * 状态用 PENDING_LOCAL（前端展示为"等待处理"），
-     * 后端 watcher 创建正式任务后，前端会读到后端的任务。
-     *
-     * 为避免和后端任务重复，用 APK 路径+时间戳做本地 tid，
-     * 且骨架里标记 "local_skeleton": true，前端可去重。
-     */
-    private fun createLocalTaskSkeleton(apk: File, pkg: String?, ver: String?): String {
-        val tid = "local_${System.currentTimeMillis()}"
-        val dir = File(tasksRoot, "$tid/meta")
-        dir.mkdirs()
-
-        val meta = mapOf(
-            "task_id" to tid,
-            "state" to "PENDING_LOCAL",          // 本地待处理
-            "idem_key" to "",
-            "source_apk" to apk.absolutePath,
-            "source_apk_sha256" to "",
-            "package_name" to (pkg ?: ""),
-            "version_name" to (ver ?: ""),
-            "allow_auto_degrade" to true,
-            "local_skeleton" to true,             // 标记：本地骨架
-            "created_at" to System.currentTimeMillis() / 1000,
-            "updated_at" to System.currentTimeMillis() / 1000
-        )
-        File(dir, "task_meta.json").writeText(gson.toJson(meta))
-        Log.i(TAG, "本地任务骨架已创建: $tid")
-        return tid
     }
 
     // ---------------- 取消任务 ----------------
