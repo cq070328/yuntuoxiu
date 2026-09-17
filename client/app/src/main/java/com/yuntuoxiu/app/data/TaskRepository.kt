@@ -46,11 +46,12 @@ object TaskRepository {
     }
 
     fun loadTask(taskId: String): TaskMetaView? {
-        val metaFile = File(tasksRoot, "$taskId/meta/task_meta.json")
-        if (!metaFile.exists()) return null
         return try {
+            val metaFile = File(tasksRoot, "$taskId/meta/task_meta.json")
+            if (!metaFile.exists()) return null
             gson.fromJson(metaFile.readText(), TaskMetaView::class.java)
         } catch (e: Exception) {
+            Log.w(TAG, "解析任务失败: $taskId", e)
             null
         }
     }
@@ -58,8 +59,12 @@ object TaskRepository {
     // ---------------- 日志 ----------------
 
     fun readLog(taskId: String): String {
-        val logFile = File(logsRoot, "$taskId/task.log")
-        return if (logFile.exists()) logFile.readText() else "（无日志）"
+        return try {
+            val logFile = File(logsRoot, "$taskId/task.log")
+            if (logFile.exists()) logFile.readText() else "（无日志）"
+        } catch (t: Throwable) {
+            "（日志读取失败: ${t.message}）"
+        }
     }
 
     // ---------------- 提交新任务 ----------------
