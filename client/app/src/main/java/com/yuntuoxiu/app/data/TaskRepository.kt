@@ -109,33 +109,34 @@ object TaskRepository {
             val reqFile = File(uploadsRoot, "create_${UUID.randomUUID()}.req.json")
             reqFile.writeText(gson.toJson(req))
 
-            // 4) 【核心提速】立即触发内置 AutoWatcher → 秒级创建正式任务
-            val created = try {
-                com.yuntuoxiu.app.worker.AutoWatcher.tick()
-            } catch (t: Throwable) {
-                Log.w(TAG, "AutoWatcher 触发失败: ${t.message}"); 0
-            }
+            // 4) 决定由谁创建任务（避免双 watcher 重复建任务）：
+            //    - 有 Termux 且 RUN_COMMAND 可用 -> 只写 create 请求，
+            //      交给 Termux 上的 Python 后端接管（唯一权威 watcher）。
+            //    - 无 Termux -> 退回 APP 内置 AutoWatcher 兜底（本地骨架）。
+            val bridge = com.yuntuoxiu.app.worker.TermuxBridge
+            val haveTermux = try {
+                bridge.isTermuxInstalled(context) && bridge.runCommandPermissionHint(context).first
+            } catch (t: Throwable) { false }
 
-            // 5) 【B 方案】自动拉起 Termux 执行 dump/修复/打包（若有 Termux）
-            try {
-                if (com.yuntuoxiu.app.worker.TermuxBridge.isTermuxInstalled(context)) {
-                    // 找到刚创建的任务 id（最新的 t_ 开头）
-                    val tid = findLatestTaskId()
-                    if (tid != null) {
-                        com.yuntuoxiu.app.worker.TermuxBridge.runTaskPipeline(
-                            context, tid, background = true)
-                        Log.i(TAG, "已自动派发任务给 Termux: $tid")
-                    }
+            var created = 0
+            if (haveTermux) {
+                // 只写 create 请求（reqFile 已在上面写好），并确保完整后端在跑
+                try {
+                    val ok = bridge.startDaemon(context)
+                    Log.i(TAG, if (ok) "已确保 Termux 完整后端在运行" else "Termux 后端启动请求失败")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "启动 Termux 后端失败: ${t.message}")
                 }
-            } catch (t: Throwable) {
-                Log.w(TAG, "派发 Termux 失败: ${t.message}")
+            } else {
+                // 无 Termux：本地兜底创建骨架（仅作任务列表秒级占位）
+                created = try {
+                    com.yuntuoxiu.app.worker.AutoWatcher.tick()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "AutoWatcher 触发失败: ${t.message}"); 0
+                }
             }
 
-            if (created == 0) {
-                Log.i(TAG, "AutoWatcher 未创建新任务（可能已存在）")
-            }
-
-            Log.i(TAG, "已提交: ${dest.absolutePath} (pkg=$pkg, created=$created)")
+            Log.i(TAG, "已提交: ${dest.absolutePath} (pkg=$pkg, haveTermux=$haveTermux, localCreated=$created)")
             SubmitResult.Success(dest.absolutePath)
         } catch (e: Exception) {
             SubmitResult.Failure(e.message ?: "提交失败")
@@ -188,11 +189,22 @@ object TaskRepository {
             // 显式声明 Array<File> 类型，避免 listFiles() 重载歧义
             val dirs: Array<File>? = tasksRoot.listFiles()
             if (dirs == null) return null
+            // ⚠️ 修复：不再用「字符串比较」判最新（毫秒时间戳等长时可行但脆弱，
+            //    且 local_ 前缀会打乱排序）。改为解析时间戳数值 + 目录 mtime 兜底。
             var best: File? = null
+            var bestTs = -1L
             for (f in dirs) {
                 if (!f.isDirectory) continue
                 if (!f.name.startsWith("t_")) continue
-                if (best == null || f.name > best!!.name) best = f
+                // 目录名形如 t_<millis>_<hex>；解析 millis 数值比较
+                val ts = f.name.removePrefix("t_")
+                    .substringBefore('_')
+                    .toLongOrNull()
+                    ?: f.lastModified()
+                if (ts > bestTs) {
+                    bestTs = ts
+                    best = f
+                }
             }
             best?.name
         } catch (t: Throwable) {
