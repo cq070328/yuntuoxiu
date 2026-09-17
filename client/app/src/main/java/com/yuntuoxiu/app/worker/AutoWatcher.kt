@@ -41,17 +41,15 @@ object AutoWatcher {
         "original", "chunks", "dump", "repaired", "build", "meta", "work"
     )
 
-    /** 单次 tick：消费所有待处理请求。返回本次创建的任务数。 */
+    /** 单次 tick：消费所有待处理请求 + 执行待办 action。返回本次创建的任务数。 */
     fun tick(): Int {
-        return try {
-            if (!uploadsRoot.exists()) {
-                uploadsRoot.mkdirs(); return 0
-            }
+        var created = 0
+        try {
+            if (!uploadsRoot.exists()) uploadsRoot.mkdirs()
             val reqs = uploadsRoot.listFiles { f ->
                 f.isFile && f.name.startsWith("create_") && f.name.endsWith(".req.json")
-            } ?: return 0
+            } ?: emptyArray()
 
-            var created = 0
             for (reqFile in reqs) {
                 try {
                     if (handleCreate(reqFile)) created++
@@ -59,11 +57,42 @@ object AutoWatcher {
                     LogStore.e(TAG, "处理请求失败 ${reqFile.name}: ${t.message}")
                 }
             }
-            created
         } catch (t: Throwable) {
             LogStore.e(TAG, "tick 异常: ${t.message}")
-            0
         }
+        return created
+    }
+
+    /**
+     * 【新增】执行所有活跃任务的待办 action（不依赖 WorkerService）。
+     * 由 MainActivity / WorkerService 调用。
+     */
+    fun processActions(context: android.content.Context): Int {
+        var done = 0
+        try {
+            val active = com.yuntuoxiu.app.data.TaskRepository.listTasks()
+                .filter { !it.isTerminal }
+            for (task in active) {
+                try {
+                    val queue = ActionQueue(task.taskId)
+                    val executor = ActionExecutor(context, task.taskId)
+                    val pending = queue.pendingPayloads()
+                    for ((payload, respFile) in pending) {
+                        LogStore.i(TAG, "[${task.taskId}] 执行 ${payload.action}")
+                        val resp = executor.execute(payload)
+                        queue.writeResponse(respFile, resp)
+                        LogStore.i(TAG, "[${task.taskId}] ${payload.action} -> " +
+                                "ok=${resp.ok} ${resp.detail}")
+                        done++
+                    }
+                } catch (t: Throwable) {
+                    LogStore.e(TAG, "[${task.taskId}] 执行 action 失败: ${t.message}")
+                }
+            }
+        } catch (t: Throwable) {
+            LogStore.e(TAG, "processActions 异常: ${t.message}")
+        }
+        return done
     }
 
     // ---------------- 核心：处理创建请求 ----------------
