@@ -787,9 +787,9 @@ class MainActivity : AppCompatActivity() {
             val t = cands[which]
             val dumpDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}/dump")
             if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
-            Toast.makeText(this@MainActivity,
-            "该任务无 dump（先用「收集 Dump」）", Toast.LENGTH_LONG).show()
-            return@setItems
+                Toast.makeText(this@MainActivity,
+                    "该任务无 dump（先用「收集 Dump」）", Toast.LENGTH_LONG).show()
+                return@showItemsDialog
             }
             lifecycleScope.launch {
             Toast.makeText(this@MainActivity,
@@ -1053,7 +1053,7 @@ class MainActivity : AppCompatActivity() {
         val listView = ListView(this).apply {
             // ⭐ 滚动优化
             isFastScrollEnabled = true                  // 快速滚动条
-            scrollingCacheEnabled = true                // 滚动缓存（减少重绘）
+            setScrollingCacheEnabled(true)              // 滚动缓存（减少重绘）
             isSmoothScrollbarEnabled = true
             setCacheColorHint(0x00000000)               // 拖动不变黑
             divider = null                              // 无分隔线（卡片自带边距）
