@@ -162,14 +162,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 val (declared, hint) = TermuxBridge.runCommandPermissionHint(this@MainActivity)
                 if (!declared) {
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("Termux 联动未就绪")
-                        .setMessage(hint + "\n\n解决：\n" +
+                    showResultDialog("Termux 联动未就绪", hint + "\n\n解决：\n" +
                                 "1. 安装 Termux\n" +
                                 "2. Termux 里跑一次: bash /sdcard/MT2/apks/termux_quick.sh\n" +
                                 "   （会安装工具并开启 allow-external-apps）")
-                        .setPositiveButton("知道了", null)
-                        .show()
                     return@setOnClickListener
                 }
                 // 真实通道探针（比权限检查可靠）：尝试让 Termux 写一个标记文件
@@ -198,16 +194,12 @@ class MainActivity : AppCompatActivity() {
                             "✅ 已请求启动完整后端，通道可用", Toast.LENGTH_LONG).show()
                         withContext(Dispatchers.IO) { refreshTermuxStatus() }
                     } else {
-                        AlertDialog.Builder(this@MainActivity)
-                            .setTitle("Termux 通道未响应")
-                            .setMessage("命令已发出，但 Termux 未响应。常见原因：\n\n" +
+                        showResultDialog("Termux 通道未响应", "命令已发出，但 Termux 未响应。常见原因：\n\n" +
                                     "1. Termux 未开启 allow-external-apps\n" +
                                     "   在 Termux 里执行：\n" +
                                     "   mkdir -p ~/.termux && echo \"allow-external-apps=true\" >> ~/.termux/termux.properties && termux-reload-settings\n\n" +
                                     "2. Termux 从未启动过（先手动打开一次）\n\n" +
                                     "3. Termux 版本过旧，请更新")
-                            .setPositiveButton("知道了", null)
-                            .show()
                     }
                 }
             }
@@ -288,11 +280,7 @@ class MainActivity : AppCompatActivity() {
                 sb.append("   -> ${if (chan) "✅ 通道可用" else "❌ 无响应"}\n")
                 sb.toString()
             }
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("Termux 诊断结果")
-                .setMessage(report)
-                .setPositiveButton("知道了", null)
-                .show()
+            showResultDialog("Termux 诊断结果", report)
         }
     }
 
@@ -423,46 +411,245 @@ class MainActivity : AppCompatActivity() {
                     ).getString("stdout") ?: "（无输出）"
                 } catch (t: Throwable) { "诊断失败: ${t.message}" }
             }
+            showResultDialog("诊断结果", out)
+        }
+    }
+
+    /** 工具面板（v1.6：真功能，不是弹窗说明） */
+    private fun showToolsPanel() {
+        showMenuDialog(
+            "工具",
+            listOf(
+                Triple("🔍", "壳诊断", "本地读 APK 判定壳类型（秒级）"),
+                Triple("🧹", "去壳清理", "删壳 so/assets（本地）"),
+                Triple("📤", "收集 Dump", "Shizuku 读取 Xposed 模块产物"),
+                Triple("☁️", "云端构建", "上传 DEX → GitHub Actions"),
+                Triple("📋", "环境自检", "检查 Shizuku/token/脚本"),
+                Triple("ℹ️", "工具用法说明", "各功能说明")
+            )
+        ) { which ->
+            when (which) {
+                0 -> toolShellDetect()
+                1 -> toolUnpackClean()
+                2 -> toolCollectDump()
+                3 -> toolCloudBuild()
+                4 -> toolEnvCheck()
+                5 -> showToolsHelp()
+            }
+        }
+    }
+
+    /** 工具 1：壳诊断（本地 ShellDetect） */
+    private fun toolShellDetect() {
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
+            }
+            if (tasks.isEmpty()) {
+                Toast.makeText(this@MainActivity, "暂无任务（先选个 APK）", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = tasks.map { it.displayName }.toTypedArray()
             AlertDialog.Builder(this@MainActivity)
-                .setTitle("诊断结果")
-                .setMessage(out)
-                .setPositiveButton("知道了", null)
+                .setTitle("选择要诊断的 APK")
+                .setItems(names) { _, which ->
+                    val t = tasks[which]
+                    lifecycleScope.launch {
+                        Toast.makeText(this@MainActivity, "诊断中…", Toast.LENGTH_SHORT).show()
+                        val rep = withContext(Dispatchers.IO) {
+                            try {
+                                val apk = File(t.sourceApk)
+                                if (!apk.exists()) {
+                                    "❌ 原 APK 不存在: ${t.sourceApk}"
+                                } else {
+                                    val v = com.yuntuoxiu.app.worker.ShellDetect.detect(apk.absolutePath)
+                                    buildString {
+                                        append("标签: ${v.tag}\n")
+                                        append("置信度: ${(v.confidence * 100).toInt()}%\n")
+                                        append("DEX 数: ${v.dexCount}\n")
+                                        append("全部命中: ${v.tagsAll.joinToString(", ")}\n\n")
+                                        append("依据:\n")
+                                        v.reasons.take(10).forEach { append("  · $it\n") }
+                                    }
+                                }
+                            } catch (e: Throwable) {
+                                "诊断失败: ${e.message}"
+                            }
+                        }
+                        showResultDialog("壳诊断结果", rep)
+                    }
+                }
+                .setNegativeButton("取消", null)
                 .show()
         }
     }
 
-    /** 工具面板 */
-    private fun showToolsPanel() {
-        val items = arrayOf(
-            "壳诊断（ytx_apk_doctor）",
-            "构建脱壳模块（make_dump_module）",
-            "收集 Dump（collect_dump）",
-            "构建 APK（ytx_build_from_dump）",
-            "去壳清理（ytx-unpack-clean）",
-            "smali 正则替换（ytx-smali-regex）"
-        )
-        AlertDialog.Builder(this@MainActivity)
-            .setTitle("工具")
-            .setItems(items) { _, which ->
-                val hint = when (which) {
-                    0 -> "用法：ytx_apk_doctor.sh <APK>\n（诊断壳类型与策略）"
-                    1 -> "用法：bash make_dump_module.sh\n（生成 Xposed 脱壳模块）"
-                    2 -> "用法：bash collect_dump.sh <包名>\n（从 App 私有目录收集 DEX）"
-                    3 -> "用法：bash ytx_build_from_dump.sh <原APK> <dump目录>\n（替换 DEX + 对齐 + 签名）"
-                    4 -> "用法：python3 ytx-unpack-clean.py <APK> <输出> --dump-dir <目录>\n（删壳 so + 入口推断）"
-                    5 -> "用法：python3 ytx-smali-regex.py <smali目录> --preset <预设>\n预设：stub-clean / nop-to-return / sig-bypass …"
-                    else -> ""
-                }
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle(items[which])
-                    .setMessage(hint +
-                        "\n\n说明：这些工具需在容器 / Termux 终端运行。" +
-                        "详细用法见工作区「架构说明.md」。")
-                    .setPositiveButton("知道了", null)
-                    .show()
+    /** 工具 2：去壳清理（本地实现，删壳 so + 找真实 Application） */
+    private fun toolUnpackClean() {
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
             }
-            .setNegativeButton("关闭", null)
-            .show()
+            if (tasks.isEmpty()) {
+                Toast.makeText(this@MainActivity, "暂无任务", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = tasks.map { it.displayName }.toTypedArray()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("选择要去壳的 APK")
+                .setItems(names) { _, which ->
+                    val t = tasks[which]
+                    lifecycleScope.launch {
+                        Toast.makeText(this@MainActivity, "清理中…", Toast.LENGTH_LONG).show()
+                        val (out, ok) = withContext(Dispatchers.IO) {
+                            try {
+                                val src = File(t.sourceApk)
+                                if (!src.exists()) return@withContext ("❌ 原 APK 不存在" to false)
+                                val dst = File(YunTuoXiuApp.CLOUD_ROOT,
+                                    "tasks/${t.taskId}/cleaned.apk")
+                                dst.parentFile?.mkdirs()
+                                val n = com.yuntuoxiu.app.worker.ShellDetect.cleanShellSo(
+                                    src.absolutePath, dst.absolutePath)
+                                ("✅ 已清理 $n 个壳条目 ->\n${dst.absolutePath}" to true)
+                            } catch (e: Throwable) {
+                                ("清理失败: ${e.message}" to false)
+                            }
+                        }
+                        showResultDialog("去壳清理", out)
+                    }
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+    }
+
+    /** 工具 3：收集 Dump（Shizuku） */
+    private fun toolCollectDump() {
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
+            }
+            val cands = tasks.filter { it.lookupPackage != null }
+            if (cands.isEmpty()) {
+                Toast.makeText(this@MainActivity, "无带包名的任务", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = cands.map { it.displayName }.toTypedArray()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("选择要收集 Dump 的任务")
+                .setItems(names) { _, which ->
+                    val t = cands[which]
+                    val pkg = t.lookupPackage!!
+                    lifecycleScope.launch {
+                        Toast.makeText(this@MainActivity, "收集中…", Toast.LENGTH_SHORT).show()
+                        val out = withContext(Dispatchers.IO) {
+                            try {
+                                val dest = File(YunTuoXiuApp.CLOUD_ROOT,
+                                    "tasks/${t.taskId}/dump")
+                                dest.mkdirs()
+                                val cmd = "mkdir -p '${dest.absolutePath}' && " +
+                                    "if [ -d '/sdcard/Android/data/$pkg/files/ytx_dump' ]; then " +
+                                    "cp -f '/sdcard/Android/data/$pkg/files/ytx_dump'/dex_*.dex " +
+                                    "'${dest.absolutePath}/' 2>/dev/null; " +
+                                    "ls '${dest.absolutePath}'/dex_*.dex 2>/dev/null | wc -l; " +
+                                    "else echo NOT_FOUND; fi"
+                                val r = ShizukuShellExecutor.exec(cmd)
+                                val o = (r.getString("stdout") ?: "").trim()
+                                if (o == "NOT_FOUND")
+                                    "❌ 未找到模块 dump 目录（先让模块跑一次）"
+                                else "✅ 收集 $o 个 dex -> ${dest.absolutePath}"
+                            } catch (e: Throwable) {
+                                "收集失败: ${e.message}"
+                            }
+                        }
+                        showResultDialog("收集 Dump", out)
+                    }
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+    }
+
+    /** 工具 4：云端构建 */
+    private fun toolCloudBuild() {
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
+            }
+            val cands = tasks.filter { it.isTerminal }
+            if (cands.isEmpty()) {
+                Toast.makeText(this@MainActivity, "暂无已处理任务", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = cands.map { it.displayName }.toTypedArray()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("选择要云端构建的任务")
+                .setItems(names) { _, which ->
+                    val t = cands[which]
+                    val dumpDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}/dump")
+                    if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
+                        Toast.makeText(this@MainActivity,
+                            "该任务无 dump（先用「收集 Dump」）", Toast.LENGTH_LONG).show()
+                        return@setItems
+                    }
+                    lifecycleScope.launch {
+                        Toast.makeText(this@MainActivity,
+                            "云端构建中（可能几分钟）…", Toast.LENGTH_LONG).show()
+                        val out = withContext(Dispatchers.IO) {
+                            try {
+                                val sh = "/sdcard/MT2/apks/ytx-cloud-build.py"
+                                val cmd = "python3 $sh --task '${t.taskId}' " +
+                                    "--apk '${t.sourceApk}' --dump '${dumpDir.absolutePath}' 2>&1 | tail -15"
+                                val r = ShizukuShellExecutor.execWithTimeout(cmd, 1800_000)
+                                (r.getString("stdout") ?: "（无输出）")
+                            } catch (e: Throwable) {
+                                "云端构建失败: ${e.message}"
+                            }
+                        }
+                        showResultDialog("云端构建结果", out)
+                    }
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+    }
+
+    /** 工具 5：环境自检 */
+    private fun toolEnvCheck() {
+        lifecycleScope.launch {
+            val rep = withContext(Dispatchers.IO) {
+                val sb = StringBuilder("== 云脱修 环境自检 ==\n\n")
+                sb.append("1) Shizuku: ${ShizukuClient.isGranted()}\n")
+                sb.append("2) Termux: ${TermuxBridge.isTermuxInstalled(this@MainActivity)}\n")
+                sb.append("3) token.txt: ${File("/sdcard/MT2/apks/yuntuoxiu-dev/token.txt").exists()}\n")
+                sb.append("4) 工作区: ${File("/sdcard/MT2/apks").exists()}\n")
+                val tools = listOf("ytx-cloud-build.py", "ytx-dex-replace.py",
+                    "ytx-zipalign.py", "ytx-unpack-clean.py", "ytx_diag_launch.sh")
+                sb.append("5) 工具脚本:\n")
+                tools.forEach { f ->
+                    sb.append("   - $f: ${File("/sdcard/MT2/apks", f).exists()}\n")
+                }
+                sb.append("6) 后端偏好: ${readBackendPref()}\n")
+                sb.append("7) 模块源码: ${File("/sdcard/MT2/apks/ytx_dump_module").exists()}\n")
+                sb.toString()
+            }
+            showResultDialog("环境自检", rep)
+        }
+    }
+
+    /** 工具 6：用法说明 */
+    private fun showToolsHelp() {
+        showResultDialog("工具用法说明", 
+                "【本地功能】（无需环境）\n" +
+                "· 壳诊断：直接读 APK，判定壳类型（秒级）\n" +
+                "· 去壳清理：删壳 so/assets，找真实入口\n" +
+                "· 收集 Dump：Shizuku 读取模块产物\n\n" +
+                "【云端功能】（需 token + 网络）\n" +
+                "· 云端构建：上传 DEX → GitHub Actions → 下载 APK\n\n" +
+                "【需要 Termux/容器】（可选）\n" +
+                "· 构建脱壳模块（make_dump_module.sh）\n" +
+                "· smali 正则替换（需 baksmali/java）\n\n" +
+                "详见工作区「架构说明.md」")
     }
 
     /** 长按任务：左「取消」右「删除」 */
@@ -508,12 +695,15 @@ class MainActivity : AppCompatActivity() {
     // ---------------- 选择 APK ----------------
 
     private fun chooseApkSource() {
-        AlertDialog.Builder(this)
-            .setTitle("选择 APK 来源")
-            .setItems(arrayOf("从文件选择（.apk）", "从已安装应用选择")) { _, which ->
-                if (which == 0) pickApkFromFile() else pickApkFromInstalled()
-            }
-            .show()
+        showMenuDialog(
+            "选择 APK 来源",
+            listOf(
+                Triple("📁", "从文件选择", "浏览设备上的 .apk 文件"),
+                Triple("📱", "从已安装应用选择", "列出第三方应用（带图标/搜索）")
+            )
+        ) { which ->
+            if (which == 0) pickApkFromFile() else pickApkFromInstalled()
+        }
     }
 
     private fun pickApkFromFile() {
@@ -829,6 +1019,72 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    // ---------------- v1.6 通用弹窗辅助 ----------------
+
+    /**
+     * 美观菜单弹窗（图标 + 标题 + 描述）。
+     * @param items Triple(图标, 标题, 描述)
+     */
+    private fun showMenuDialog(
+        title: String,
+        items: List<Triple<String, String, String>>,
+        onPick: (Int) -> Unit
+    ) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val scroll = android.widget.ScrollView(this).apply {
+            addView(container)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                minOf(dp(420), (resources.displayMetrics.heightPixels * 0.6).toInt()))
+        }
+        items.forEachIndexed { idx, (icon, t, d) ->
+            val row = layoutInflater.inflate(R.layout.dialog_item, container, false)
+            row.findViewById<TextView>(R.id.tvItemIcon).text = icon
+            row.findViewById<TextView>(R.id.tvItemTitle).text = t
+            val tvD = row.findViewById<TextView>(R.id.tvItemDesc)
+            if (d.isNotBlank()) {
+                tvD.text = d
+                tvD.visibility = View.VISIBLE
+            }
+            row.setOnClickListener {
+                onPick(idx)
+            }
+            container.addView(row)
+        }
+        val dlg = AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(scroll)
+            .setNegativeButton("关闭", null)
+            .create()
+        dlg.show()
+    }
+
+    /** 美化只读结果弹窗（等宽字体 + 可滚动） */
+    private fun showResultDialog(title: String, body: String) {
+        val tv = TextView(this).apply {
+            text = body
+            textSize = 12f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(0xFFC9D1D9.toInt())
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setTextIsSelectable(true)
+        }
+        val scroll = android.widget.ScrollView(this).apply {
+            addView(tv)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                minOf(dp(480), (resources.displayMetrics.heightPixels * 0.65).toInt()))
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(scroll)
+            .setPositiveButton("关闭", null)
+            .show()
+    }
 
     companion object {
         private const val TAG = "MainActivity"

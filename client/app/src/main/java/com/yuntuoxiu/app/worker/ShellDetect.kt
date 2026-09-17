@@ -233,4 +233,77 @@ object ShellDetect {
         LogStore.i(TAG, "壳识别: $bestTag (${"%.2f".format(bestConf)}) dex=$dexCount")
         return Verdict(bestTag, bestConf, tagsAll, reasons, dexCount)
     }
+
+    /**
+     * v1.6 新增：去壳清理（纯 Kotlin，无需 java/python）。
+     *
+     * 功能：
+     *   · 删除壳的 so（按已知特征库）
+     *   · 删除壳的 assets
+     *   · 重写 APK（保持 .so/arsc Stored + 对齐交给后续步骤）
+     *
+     * @return 删除的条目数
+     */
+    fun cleanShellSo(srcApk: String, dstApk: String): Int {
+        // 壳 so / assets 特征（与 ytx-unpack-clean.py 对齐）
+        val soExact = listOf(
+            "libjiagu.so", "libjiagu_art.so", "libjiagu_x86.so", "libjiagu_a64.so",
+            "libshell.so", "libshellx.so", "libtup.so", "libtxgui.so",
+            "libsecexe.so", "libsecmain.so", "libDexHelper.so",
+            "libexec.so", "libexecmain.so", "libijiami.so",
+            "libnmmp.so", "libnmmvm.so",
+            "libmobisec.so", "libmobisecx.so",
+            "libchaosvmp.so", "libddog.so", "libfdog.so"
+        )
+        val soPrefix = listOf("libshell-", "libshella-")
+        val assetKeys = listOf("fsapk", "libjiagu", "libsecex", "ijiami",
+                               "libsecmain", "0OO00l111l1l", "o0oooOO0ooOo.dat",
+                               "libDexHelper")
+
+        var removed = 0
+        try {
+            val zin = java.util.zip.ZipFile(srcApk)
+            val zout = java.util.zip.ZipOutputStream(
+                java.io.FileOutputStream(dstApk))
+            val entries = zin.entries()
+            while (entries.hasMoreElements()) {
+                val e = entries.nextElement()
+                val name = e.name
+                val low = name.lowercase()
+
+                // 判定是否壳条目
+                var isShell = false
+                val bn = low.substringAfterLast('/')
+                if (bn.endsWith(".so")) {
+                    if (soExact.any { bn == it }) isShell = true
+                    if (soPrefix.any { bn.startsWith(it) }) isShell = true
+                }
+                if (low.startsWith("assets/") || low.contains("assets/")) {
+                    if (assetKeys.any { low.contains(it.lowercase()) }) isShell = true
+                }
+
+                if (isShell) {
+                    removed++
+                    LogStore.i(TAG, "去壳: 删除 $name")
+                    continue
+                }
+
+                // 写回（so/arsc 用 STORED，其余保持 DEFLATED）
+                val data = zin.getInputStream(e).readBytes()
+                val mustStored = low.endsWith(".so") || low.endsWith("resources.arsc")
+                val ne = java.util.zip.ZipEntry(name)
+                ne.time = e.time
+                zout.putNextEntry(ne)
+                zout.write(data)
+                zout.closeEntry()
+            }
+            zout.close()
+            zin.close()
+            LogStore.i(TAG, "去壳完成: 删除 $removed 个条目 -> $dstApk")
+        } catch (t: Throwable) {
+            LogStore.e(TAG, "去壳清理失败: ${t.message}")
+            throw t
+        }
+        return removed
+    }
 }
