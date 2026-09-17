@@ -120,6 +120,40 @@ object TermuxBridge {
         )
     }
 
+    /**
+     * 【环境自检 + 自动搭建】
+     * 检查 Termux 依赖是否就绪；缺失则自动跑 bootstrap 脚本安装。
+     */
+    fun ensureEnvironment(context: Context): Boolean {
+        if (!isTermuxInstalled(context)) {
+            LogStore.w(TAG, "Termux 未安装，无法搭建环境")
+            return false
+        }
+        val boot = "$WORKSPACE/termux_bootstrap.sh"
+        if (!java.io.File(boot).exists()) {
+            LogStore.w(TAG, "bootstrap 脚本不存在: $boot")
+            return false
+        }
+        // 让 Termux 执行 bootstrap（幂等，已装的会跳过）
+        val ok = runInTermux(
+            context,
+            "/data/data/com.termux/files/usr/bin/bash",
+            listOf(boot),
+            background = true
+        )
+        LogStore.i(TAG, "已请求 Termux 自检/搭建环境: $ok")
+        return ok
+    }
+
+    /**
+     * 检查是否已搭建完成（读取 stamp 文件）
+     * 注意：APP 无法直接读 Termux 私有目录，这里仅做提示用。
+     */
+    fun isBootstrappedHint(): Boolean {
+        // APP 无法访问 /data/data/com.termux，只能提示用户
+        return false
+    }
+
     /** 打开 Termux 并进入工作区目录（便于用户查看） */
     fun openTermuxAtWorkspace(context: Context): Boolean {
         // RUN_COMMAND 前台执行：打开 Termux 并 cd 到工作区
