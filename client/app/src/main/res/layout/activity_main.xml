@@ -47,8 +47,23 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:textSize="12sp"
-            android:text="启动 Worker" />
+            android:text="启动" />
+
+        <Button
+            android:id="@+id/btnStartDaemon"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:text="Termux守护" />
+
+        <Button
+            android:id="@+id/btnOpenTermux"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:text="打开Termux" />
     </LinearLayout>
 
     <TextView
