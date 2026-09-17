@@ -42,6 +42,9 @@ object ActionType {
     const val UPLOAD_CHUNK = "UPLOAD_CHUNK"
     const val REPORT_STATUS = "REPORT_STATUS"
     const val CANCEL = "CANCEL"
+
+    /** v1.6 新增：构建（DEX 替换+对齐+签名） */
+    const val BUILD_APK = "BUILD_APK"
 }
 
 /**

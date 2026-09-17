@@ -187,11 +187,20 @@ object TermuxBridge {
             //   - 否则 -> exec <完整命令>
             val content = when {
                 command.endsWith("/bash") || command.endsWith("bash") -> {
-                    // command 是 bash，args = [脚本, 参数...]
-                    if (args.isNotEmpty()) {
-                        "run_script\n" + args.joinToString("\n")
-                    } else {
-                        "ping"
+                    // ⚠️ command 是 bash。args 有 3 种形态：
+                    //   ① [script, a, b]       -> run_script（执行脚本）
+                    //   ② ["-c", "cmd string"] -> exec（执行 shell 命令）
+                    //   ③ []                   -> ping
+                    val first = args.firstOrNull()
+                    when {
+                        first == "-c" -> {
+                            // bash -c "<cmd>"：拼成 exec
+                            "exec\n" + args.drop(1).joinToString(" ")
+                        }
+                        first != null && !first.startsWith("-") -> {
+                            "run_script\n" + args.joinToString("\n")
+                        }
+                        else -> "ping"
                     }
                 }
                 command.startsWith("/") && File(command).exists() -> {

@@ -1,20 +1,21 @@
 package com.yuntuoxiu.app.worker
-
 import android.content.Context
 import android.util.Log
+import com.yuntuoxiu.app.YunTuoXiuApp
 import com.yuntuoxiu.app.data.ActionPayload
 import com.yuntuoxiu.app.data.ActionResponse
 import com.yuntuoxiu.app.data.ActionType
 import com.yuntuoxiu.app.shizuku.ShizukuClient
 import com.yuntuoxiu.app.shizuku.ShizukuErrorCodes
+import com.yuntuoxiu.app.shizuku.ShizukuShellExecutor
 import java.io.File
-
 /**
  * ActionExecutor：把后端下发的 action_payload 翻译成真机操作。
  *
  * 约束（PRD 定稿）：
  *  - PRE_CHECK 只上报环境状态，禁止触发任何 dump 流水线。
- *  - 动态 dump 通过 LSPatch + Frida-Gadget 完成（无需 root）。
+ *  - 动态 dump 通过 Xposed 模块（com.ytx.dump）完成（无需 root）。
+ *    （v1.6：Frida-Gadget 方案因 Android 10+ SELinux 限制已废弃）
  *  - dump 产出做 0 字节过滤 + MD5 + 分片写入 chunks/。
  */
 class ActionExecutor(private val context: Context, private val taskId: String) {
@@ -42,6 +43,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                 ActionType.DUMP_MEMORY -> onDump(payload)
                 ActionType.FILTER_DEX -> onFilter(payload)
                 ActionType.UPLOAD_CHUNK -> onUpload(payload)
+                ActionType.BUILD_APK -> onBuild(payload)
                 ActionType.CANCEL -> ActionResponse(true, "cancelled")
                 else -> ActionResponse(false, "未知 action: ${payload.action}")
             }
@@ -140,21 +142,68 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
         }
     }
 
-    /** 执行内存 dump：Frida-Gadget 已在目标进程内，dump 内存中的 dex */
+    /**
+     * 执行内存 dump（v1.6：收集 Xposed 模块产物）
+     *
+     * ⭐ 技术变更：
+     *   原方案假设 Frida-Gadget 已在目标进程内 dump 到本地目录 —— 已废弃
+     *   （Android 10+ SELinux 限制）。
+     *
+     *   新方案：Xposed 模块（com.ytx.dump）在目标 App 内运行，
+     *   把真实 DEX dump 到 /sdcard/Android/data/<pkg>/files/ytx_dump/。
+     *
+     *   ⚠️ 关键：这个目录是 App 私有的：
+     *     · 容器/Termux 读不了
+     *     · **只有 Shizuku（shell, ext_data_rw 组）能读**
+     *   所以必须用 ShizukuShellExecutor 来「收集」。
+     */
     private fun onDump(payload: ActionPayload): ActionResponse {
-        val pkg = payload.params["package"] as? String ?: return ActionResponse(false, "缺 package")
-        // Frida-Gadget 由 LSPatch 注入后随 App 加载，脚本在 App 内 dump 内存 dex。
-        val dumpDir = File(context.getExternalFilesDir(null), "dump/$pkg")
-        if (!dumpDir.exists()) dumpDir.mkdirs()
+        val pkg = payload.params["package"] as? String
+            ?: return ActionResponse(false, "缺 package")
 
-        val dexCount = dumpDir.listFiles { f -> f.name.endsWith(".dex") }?.size ?: 0
-        return if (dexCount > 0) {
-            // dump 完成后立刻过滤 + 分片写入 chunks/
-            val uploaded = DexDumper.filterAndUpload(dumpDir, taskId)
-            ActionResponse(true, "dump 完成，产出 $dexCount 个 dex，已分片 ${uploaded.size} 个",
-                mapOf("dump_dir" to dumpDir.absolutePath, "dex_names" to uploaded))
+        val modDump = "/sdcard/Android/data/$pkg/files/ytx_dump"
+        val taskDump = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$taskId/dump")
+        taskDump.mkdirs()
+
+        Log.i(TAG, "收集 Xposed 模块 dump: $modDump")
+
+        // 用 Shizuku 执行（shell 有权限读 App 私有目录）
+        val cmd = buildString {
+            append("mkdir -p '${taskDump.absolutePath}' && ")
+            append("if [ -d '$modDump' ]; then ")
+            append("  cp -f '$modDump'/dex_*.dex '${taskDump.absolutePath}/' 2>/dev/null; ")
+            append("  ls '${taskDump.absolutePath}'/dex_*.dex 2>/dev/null | wc -l; ")
+            append("else echo NOT_FOUND; fi")
+        }
+
+        val r = ShizukuShellExecutor.exec(cmd)
+        val out = (r.getString("stdout") ?: "").trim()
+        val code = r.getInt("code")
+
+        Log.i(TAG, "Shizuku 收集结果: code=$code out=${out.take(200)}")
+
+        if (out == "NOT_FOUND") {
+            return ActionResponse(
+                false,
+                "未找到 Xposed 模块 dump 目录（$modDump）。\n" +
+                "请先：① 安装 com.ytx.dump 模块 ② NPatch 处理目标 APK 并启用模块 ③ 启动目标 App",
+                mapOf("reason" to "need_npatch", "expected" to modDump)
+            )
+        }
+
+        val n = out.toIntOrNull() ?: 0
+        return if (n > 0) {
+            // 收集到 dex -> 交给分片上传
+            val uploaded = DexDumper.filterAndUpload(taskDump, taskId)
+            ActionResponse(
+                true,
+                "已从 Xposed 模块收集 $n 个 dex，分片 ${uploaded.size} 个",
+                mapOf("dex_count" to n, "dex_names" to uploaded,
+                      "source" to "xposed_module")
+            )
         } else {
-            ActionResponse(false, "dump 无 dex 产出", mapOf("dump_dir" to dumpDir.absolutePath))
+            ActionResponse(false, "dump 目录存在但无有效 dex（模块是否已跑？）",
+                mapOf("reason" to "empty_dump", "dump_dir" to modDump))
         }
     }
 
@@ -168,6 +217,43 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
             ActionResponse(true, "过滤+分片完成", mapOf("dex_names" to uploaded))
         else
             ActionResponse(false, "过滤后无合法 dex")
+    }
+
+    /**
+     * 构建：把任务 dump/ 里的 DEX 装回原 APK（替换+对齐+签名）。
+     *
+     * v1.6 新增。调容器/Termux 的 ytx_build_from_dump.sh。
+     *
+     * ⚠️ 注意：构建是重活（apktool/java），需容器或 Termux。
+     *   本动作会通过命令桥（cmd/*.cmd）触发，由 worker 执行。
+     */
+    private fun onBuild(payload: ActionPayload): ActionResponse {
+        val origApk = payload.params["original_apk"] as? String
+            ?: return ActionResponse(false, "缺 original_apk")
+        val taskDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$taskId")
+        val dumpDir = File(taskDir, "dump")
+        if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
+            return ActionResponse(false, "任务 dump 目录为空（先收集 DEX）",
+                mapOf("dump_dir" to dumpDir.absolutePath))
+        }
+        val outApk = File(taskDir, "build/out.apk")
+
+        // 通过命令桥触发（worker 执行真正的构建）
+        val cmdDir = File(YunTuoXiuApp.CLOUD_ROOT, "cmd").apply { mkdirs() }
+        val stamp = System.currentTimeMillis()
+        val cmdFile = File(cmdDir, "build_${stamp}.cmd")
+        cmdFile.writeText(
+            "run_script\n" +
+            "/storage/emulated/0/MT2/apks/ytx_build_from_dump.sh\n" +
+            "$origApk\n${dumpDir.absolutePath}\n${outApk.absolutePath}\n"
+        )
+        Log.i(TAG, "已下发构建请求: ${cmdFile.name}")
+
+        return ActionResponse(
+            true,
+            "已下发构建请求（worker 执行中）",
+            mapOf("cmd" to cmdFile.name, "out" to outApk.absolutePath)
+        )
     }
 
     private fun onUpload(payload: ActionPayload): ActionResponse {
