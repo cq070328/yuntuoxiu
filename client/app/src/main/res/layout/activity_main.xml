@@ -1,150 +1,331 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  云脱修 v1.6 — 主界面（Material 卡片式）
+  · 顶部：状态卡片（Shizuku / 构建后端 / 构建服务）
+  · 中部：操作按钮（选APK / 处理 / 诊断 / 工具）
+  · 下部：任务列表 + 日志
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:background="#0D1117">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="云脱修"
-        android:textSize="22sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/tvShizuku"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Shizuku 状态检查中..."
-        android:textSize="13sp"
-        android:paddingTop="6dp"
-        android:paddingBottom="2dp" />
-
-    <!-- Termux 守护状态（读取心跳文件） -->
-    <TextView
-        android:id="@+id/tvTermuxStatus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Termux 状态检查中..."
-        android:textSize="13sp"
-        android:paddingTop="2dp"
-        android:paddingBottom="6dp" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/btnGrantShizuku"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textSize="12sp"
-            android:text="授权 Shizuku" />
-
-        <Button
-            android:id="@+id/btnPickApk"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textSize="12sp"
-            android:text="选择 APK" />
-
-        <Button
-            android:id="@+id/btnStartWorker"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="启动" />
-
-        <Button
-            android:id="@+id/btnStartDaemon"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="6dp"
-            android:text="Termux守护" />
-
-        <Button
-            android:id="@+id/btnOpenTermux"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="6dp"
-            android:text="打开Termux" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/tvTaskCount"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="任务列表（0）"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:paddingTop="12dp"
-        android:paddingBottom="4dp" />
-
-    <!-- 任务列表（占上半部分） -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rvTasks"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="3" />
-
-    <!-- 分隔线 -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#333333"
-        android:layout_marginTop="8dp"
-        android:layout_marginBottom="4dp" />
-
-    <!-- 运行日志头部 + 清除按钮 -->
+    <!-- 标题栏 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="10dp">
 
         <TextView
-            android:id="@+id/tvLogHeader"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="运行日志（实时）"
-            android:textSize="12sp"
+            android:text="云脱修"
+            android:textSize="20sp"
             android:textStyle="bold"
-            android:textColor="#58A6FF" />
+            android:textColor="#E6EDF3" />
 
-        <Button
-            android:id="@+id/btnClearLog"
+        <TextView
+            android:id="@+id/tvVersion"
             android:layout_width="wrap_content"
-            android:layout_height="32dp"
-            android:minWidth="0dp"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
+            android:layout_height="wrap_content"
+            android:text="v1.6.0"
             android:textSize="11sp"
-            android:text="清除日志" />
+            android:textColor="#8B949E" />
     </LinearLayout>
 
-    <ScrollView
-        android:id="@+id/svLog"
+    <!-- 状态卡片 -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="10dp"
+        app:cardBackgroundColor="#161B22"
+        app:cardCornerRadius="10dp"
+        app:cardElevation="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- Shizuku -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingBottom="6dp">
+
+                <TextView
+                    android:id="@+id/tvShizukuBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="●"
+                    android:textSize="14sp"
+                    android:textColor="#F85149"
+                    android:paddingEnd="6dp" />
+
+                <TextView
+                    android:id="@+id/tvShizuku"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Shizuku 检查中…"
+                    android:textSize="12sp"
+                    android:textColor="#C9D1D9" />
+
+                <Button
+                    android:id="@+id/btnGrantShizuku"
+                    android:layout_width="wrap_content"
+                    android:layout_height="30dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:textSize="11sp"
+                    android:text="授权" />
+            </LinearLayout>
+
+            <!-- 构建后端 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingBottom="6dp">
+
+                <TextView
+                    android:id="@+id/tvBackendBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="●"
+                    android:textSize="14sp"
+                    android:textColor="#F0883E"
+                    android:paddingEnd="6dp" />
+
+                <TextView
+                    android:id="@+id/tvBackend"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="构建后端：检测中…"
+                    android:textSize="12sp"
+                    android:textColor="#C9D1D9" />
+
+                <Button
+                    android:id="@+id/btnChooseBackend"
+                    android:layout_width="wrap_content"
+                    android:layout_height="30dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:textSize="11sp"
+                    android:text="选择" />
+            </LinearLayout>
+
+            <!-- 构建服务 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/tvServiceBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="●"
+                    android:textSize="14sp"
+                    android:textColor="#F0883E"
+                    android:paddingEnd="6dp" />
+
+                <TextView
+                    android:id="@+id/tvTermuxStatus"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="构建服务：检测中…"
+                    android:textSize="12sp"
+                    android:textColor="#C9D1D9" />
+
+                <Button
+                    android:id="@+id/btnStartDaemon"
+                    android:layout_width="wrap_content"
+                    android:layout_height="30dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:textSize="11sp"
+                    android:text="启动" />
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- 操作按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="10dp">
+
+        <Button
+            android:id="@+id/btnPickApk"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:textSize="12sp"
+            android:text="选择APK" />
+
+        <Button
+            android:id="@+id/btnStartWorker"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:textSize="12sp"
+            android:text="立即处理" />
+
+        <Button
+            android:id="@+id/btnDiagnose"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:textSize="12sp"
+            android:text="诊断" />
+
+        <Button
+            android:id="@+id/btnOpenTools"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:textSize="12sp"
+            android:text="工具" />
+    </LinearLayout>
+
+    <!-- 任务列表 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="3"
+        android:orientation="vertical"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/tvTaskCount"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="任务列表（0）"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="#E6EDF3" />
+
+            <TextView
+                android:id="@+id/tvTaskHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="点开详情 · 长按菜单"
+                android:textSize="10sp"
+                android:textColor="#6E7681" />
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvTasks"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:clipToPadding="false" />
+    </LinearLayout>
+
+    <!-- 日志 -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="2"
-        android:paddingTop="2dp"
-        android:scrollbars="vertical">
+        android:orientation="vertical"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginTop="4dp">
 
-        <TextView
-            android:id="@+id/tvLog"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="等待日志..."
-            android:textSize="10sp"
-            android:fontFamily="monospace"
-            android:alpha="0.7" />
-    </ScrollView>
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingBottom="4dp">
+
+            <TextView
+                android:id="@+id/tvLogHeader"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="运行日志"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#58A6FF" />
+
+            <Button
+                android:id="@+id/btnClearLog"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:minWidth="0dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:textSize="10sp"
+                android:text="清除" />
+        </LinearLayout>
+
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            app:cardBackgroundColor="#0A0C10"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="0dp">
+
+            <ScrollView
+                android:id="@+id/svLog"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="8dp"
+                android:scrollbars="vertical">
+
+                <TextView
+                    android:id="@+id/tvLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="等待日志…"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:textColor="#8B949E"
+                    android:lineSpacingExtra="2dp" />
+            </ScrollView>
+        </androidx.cardview.widget.CardView>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="12dp" />
 
 </LinearLayout>

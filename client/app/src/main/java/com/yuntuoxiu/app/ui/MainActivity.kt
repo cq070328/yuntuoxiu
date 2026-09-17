@@ -34,6 +34,7 @@ import com.yuntuoxiu.app.data.TaskGroup
 import com.yuntuoxiu.app.data.TaskMetaView
 import com.yuntuoxiu.app.data.TaskRepository
 import com.yuntuoxiu.app.shizuku.ShizukuClient
+import com.yuntuoxiu.app.shizuku.ShizukuShellExecutor
 import com.yuntuoxiu.app.worker.TermuxBridge
 import com.yuntuoxiu.app.worker.WorkerService
 import kotlinx.coroutines.Dispatchers
@@ -132,19 +133,23 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
-        // 【新增】打开 Termux
-        findViewById<View>(R.id.btnOpenTermux)?.setOnClickListener {
-            if (!TermuxBridge.isTermuxInstalled(this)) {
-                AlertDialog.Builder(this)
-                    .setTitle("未安装 Termux")
-                    .setMessage("需要 Termux 才能执行脱壳/修复/打包。\n\n" +
-                            "请安装 Termux_0.119.0-beta.3.apk（在工作区目录）。")
-                    .setPositiveButton("知道了", null)
-                    .show()
-                return@setOnClickListener
-            }
-            TermuxBridge.openTermuxAtWorkspace(this)
+        // 【v1.6】选择构建后端（云端 / 容器 / Termux / 自动）
+        findViewById<View>(R.id.btnChooseBackend)?.setOnClickListener {
+            chooseBuildBackend()
         }
+
+        // 【v1.6】诊断（启动诊断：能否正常运行）
+        findViewById<View>(R.id.btnDiagnose)?.setOnClickListener {
+            runLaunchDiagnose()
+        }
+
+        // 【v1.6】工具面板
+        findViewById<View>(R.id.btnOpenTools)?.setOnClickListener {
+            showToolsPanel()
+        }
+
+        // 版本号显示
+        findViewById<TextView>(R.id.tvVersion)?.text = "v" + appVersionName()
 
         // 【v1.5.3】启动/停止 Termux 完整后端
         //   单击 = 启动完整后端（后端调度器 + 构建 worker）
@@ -230,23 +235,30 @@ class MainActivity : AppCompatActivity() {
         tvShizuku.text = if (ShizukuClient.isGranted())
             "✅ Shizuku 已授权（ABI: arm64-v8a）"
         else "⚠️ Shizuku 未授权"
+        findViewById<TextView>(R.id.tvShizukuBadge)?.setTextColor(
+            if (ShizukuClient.isGranted()) 0xFF3FB950.toInt() else 0xFFF85149.toInt())
         refreshTermuxStatus()
+        refreshBackendStatus()   // v1.6：后端状态
         refreshTasks()
         refreshLog()
     }
 
-    /** 刷新 Termux 守护状态显示（读取心跳文件）。 */
+    /** 刷新构建服务状态显示（读取心跳文件）。 */
     private fun refreshTermuxStatus() {
         try {
-            val tv = findViewById<android.widget.TextView>(R.id.tvTermuxStatus) ?: return
+            val tv = findViewById<TextView>(R.id.tvTermuxStatus) ?: return
+            val badge = findViewById<TextView>(R.id.tvServiceBadge)
             if (!TermuxBridge.isTermuxInstalled(this)) {
-                tv.text = "⚠️ 未安装 Termux（无法执行 dump/修复/打包）"
+                tv.text = "构建服务：未安装 Termux（可选容器/云端）"
+                badge?.setTextColor(0xFFF0883E.toInt())
                 return
             }
             val (online, desc) = TermuxBridge.readDaemonStatus()
-            tv.text = if (online) "✅ Termux $desc" else "⚠️ Termux $desc"
+            tv.text = if (online) "构建服务：✅ $desc" else "构建服务：⚠️ $desc"
+            badge?.setTextColor(
+                if (online) 0xFF3FB950.toInt() else 0xFFF0883E.toInt())
         } catch (t: Throwable) {
-            LogStore.w(TAG, "刷新 Termux 状态失败: ${t.message}")
+            LogStore.w(TAG, "刷新构建服务状态失败: ${t.message}")
         }
     }
 
@@ -285,6 +297,173 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------------- 任务长按菜单 ----------------
+
+    // ---------------- v1.6 新增：后端选择 / 诊断 / 工具 ----------------
+
+    /** 应用版本名 */
+    private fun appVersionName(): String {
+        return try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+        } catch (t: Throwable) { "?" }
+    }
+
+    /** 选择构建后端（持久化到 .build_backend） */
+    private fun chooseBuildBackend() {
+        lifecycleScope.launch {
+            val cur = withContext(Dispatchers.IO) { readBackendPref() }
+            val labels = arrayOf(
+                "自动（推荐：云端 > 容器 > Termux）",
+                "云端构建（GitHub Actions）",
+                "容器构建（Operit Ubuntu）",
+                "Termux 构建"
+            )
+            val vals = arrayOf("auto", "cloud", "container", "termux")
+            val checked = vals.indexOf(cur).coerceAtLeast(0)
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("选择构建后端（当前：$cur）")
+                .setSingleChoiceItems(labels, checked) { d, which ->
+                    val v = vals[which]
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.IO) { writeBackendPref(v) }
+                        d.dismiss()
+                        Toast.makeText(this@MainActivity,
+                            "已设置：$v", Toast.LENGTH_SHORT).show()
+                        refreshBackendStatus()
+                    }
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+    }
+
+    private fun readBackendPref(): String {
+        return try {
+            val f = File("/sdcard/MT2/apks/unpackcloud/.build_backend")
+            if (f.exists()) f.readText().trim().ifBlank { "auto" } else "auto"
+        } catch (t: Throwable) { "auto" }
+    }
+
+    private fun writeBackendPref(v: String) {
+        try {
+            val f = File("/sdcard/MT2/apks/unpackcloud/.build_backend")
+            f.parentFile?.mkdirs()
+            f.writeText(v)
+        } catch (t: Throwable) {
+            LogStore.e(TAG, "写后端偏好失败: ${t.message}")
+        }
+    }
+
+    /** 刷新「构建后端」状态行 */
+    private fun refreshBackendStatus() {
+        lifecycleScope.launch {
+            val (txt, ok) = withContext(Dispatchers.IO) {
+                val pref = readBackendPref()
+                // 可用性检查（粗粒度）
+                val cloudOk = File("/sdcard/MT2/apks/yuntuoxiu-dev/token.txt").let {
+                    it.exists() && it.length() > 20
+                }
+                val containerOk = File("/root/ytx-tools/apktool.jar").exists() ||
+                        File("/sdcard/MT2/apks/ytx-tools/apktool.jar").exists()
+                val termuxOk = TermuxBridge.isTermuxInstalled(this@MainActivity)
+
+                val pick = when (pref) {
+                    "cloud" -> if (cloudOk) "cloud" else null
+                    "container" -> if (containerOk) "container" else null
+                    "termux" -> if (termuxOk) "termux" else null
+                    else -> when {
+                        cloudOk -> "cloud"
+                        containerOk -> "container"
+                        termuxOk -> "termux"
+                        else -> null
+                    }
+                }
+                val title = "构建后端：$pref" +
+                    (if (pick != null) " → 用 $pick" else "（无可用）")
+                title to (pick != null)
+            }
+            findViewById<TextView>(R.id.tvBackend)?.text = txt
+            findViewById<TextView>(R.id.tvBackendBadge)?.setTextColor(
+                if (ok) 0xFF3FB950.toInt() else 0xFFF85149.toInt())
+        }
+    }
+
+    /** 启动诊断（调 ytx_diag_launch.sh） */
+    private fun runLaunchDiagnose() {
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
+            }
+            val finished = tasks.filter { it.isTerminal }
+            if (finished.isEmpty()) {
+                Toast.makeText(this@MainActivity, "暂无已处理任务可诊断", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = finished.map { it.displayName }.toTypedArray()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("选择要诊断的任务")
+                .setItems(names) { _, which ->
+                    val t = finished[which]
+                    diagnoseTask(t)
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+    }
+
+    private fun diagnoseTask(task: TaskMetaView) {
+        val outApk = File("/sdcard/MT2/apks/云脱修-${task.taskId}.apk")
+        val pkg = task.lookupPackage ?: "?"
+        lifecycleScope.launch {
+            Toast.makeText(this@MainActivity, "正在诊断…", Toast.LENGTH_SHORT).show()
+            val out = withContext(Dispatchers.IO) {
+                try {
+                    ShizukuShellExecutor.exec(
+                        "sh /sdcard/MT2/apks/ytx_diag_launch.sh " +
+                        "'${outApk.absolutePath}' '$pkg' 2>&1 | tail -20"
+                    ).getString("stdout") ?: "（无输出）"
+                } catch (t: Throwable) { "诊断失败: ${t.message}" }
+            }
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("诊断结果")
+                .setMessage(out)
+                .setPositiveButton("知道了", null)
+                .show()
+        }
+    }
+
+    /** 工具面板 */
+    private fun showToolsPanel() {
+        val items = arrayOf(
+            "壳诊断（ytx_apk_doctor）",
+            "构建脱壳模块（make_dump_module）",
+            "收集 Dump（collect_dump）",
+            "构建 APK（ytx_build_from_dump）",
+            "去壳清理（ytx-unpack-clean）",
+            "smali 正则替换（ytx-smali-regex）"
+        )
+        AlertDialog.Builder(this@MainActivity)
+            .setTitle("工具")
+            .setItems(items) { _, which ->
+                val hint = when (which) {
+                    0 -> "用法：ytx_apk_doctor.sh <APK>\n（诊断壳类型与策略）"
+                    1 -> "用法：bash make_dump_module.sh\n（生成 Xposed 脱壳模块）"
+                    2 -> "用法：bash collect_dump.sh <包名>\n（从 App 私有目录收集 DEX）"
+                    3 -> "用法：bash ytx_build_from_dump.sh <原APK> <dump目录>\n（替换 DEX + 对齐 + 签名）"
+                    4 -> "用法：python3 ytx-unpack-clean.py <APK> <输出> --dump-dir <目录>\n（删壳 so + 入口推断）"
+                    5 -> "用法：python3 ytx-smali-regex.py <smali目录> --preset <预设>\n预设：stub-clean / nop-to-return / sig-bypass …"
+                    else -> ""
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(items[which])
+                    .setMessage(hint +
+                        "\n\n说明：这些工具需在容器 / Termux 终端运行。" +
+                        "详细用法见工作区「架构说明.md」。")
+                    .setPositiveButton("知道了", null)
+                    .show()
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
 
     /** 长按任务：左「取消」右「删除」 */
     private fun showTaskMenu(task: TaskMetaView) {

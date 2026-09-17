@@ -1,3 +1,49 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.UnpackCloud" parent="Theme.Material3.DayNight.NoActionBar" />
+
+    <!-- 云脱修 主题：GitHub 暗色风格（Material 3） -->
+    <style name="Theme.UnpackCloud" parent="Theme.Material3.Dark.NoActionBar">
+        <!-- 主色：GitHub 蓝 -->
+        <item name="colorPrimary">#58A6FF</item>
+        <item name="colorOnPrimary">#0D1117</item>
+        <item name="colorPrimaryContainer">#1F6FEB</item>
+        <item name="colorOnPrimaryContainer">#E6EDF3</item>
+
+        <!-- 次色 -->
+        <item name="colorSecondary">#3FB950</item>
+        <item name="colorOnSecondary">#0D1117</item>
+        <item name="colorError">#F85149</item>
+
+        <!-- 背景 / 表面 -->
+        <item name="android:colorBackground">#0D1117</item>
+        <item name="colorSurface">#161B22</item>
+        <item name="colorOnSurface">#E6EDF3</item>
+        <item name="colorSurfaceVariant">#21262D</item>
+        <item name="colorOnSurfaceVariant">#8B949E</item>
+        <item name="android:colorBackgroundFloating">#161B22</item>
+
+        <!-- 状态栏 / 导航栏 -->
+        <item name="android:statusBarColor">#0D1117</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">#0D1117</item>
+
+        <!-- 按钮圆角 -->
+        <item name="materialButtonStyle">@style/YtxButton</item>
+    </style>
+
+    <!-- 主按钮样式（圆角 + 紧凑） -->
+    <style name="YtxButton" parent="Widget.Material3.Button">
+        <item name="cornerRadius">8dp</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+    </style>
+
+    <!-- 小按钮（状态行里的「授权/选择/启动」） -->
+    <style name="YtxButton.Small" parent="YtxButton">
+        <item name="android:textSize">11sp</item>
+        <item name="cornerRadius">6dp</item>
+    </style>
+
 </resources>
