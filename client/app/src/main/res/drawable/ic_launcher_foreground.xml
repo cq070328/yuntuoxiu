@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 云脱修 图标前景（矢量：下载/云 图形，代表"云脱壳"） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 云形 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,66h34c7.7,0 14,-6.3 14,-14s-6.3,-14 -14,-14c-1.5,0 -3,0.2 -4.4,0.7C64.6,32.3 57.8,28 50,28c-11,0 -20,9 -20,20v0.3C25.3,49.6 22,54.4 22,60c0,6.6 5.4,12 12,12h4z" />
+
+    <!-- 向下箭头（下载/取出） -->
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M54,46l0,14M48,55l6,6 6,-6"
+        android:strokeColor="#1565C0"
+        android:strokeWidth="4"
+        android:strokeLineCap="round" />
+</vector>
