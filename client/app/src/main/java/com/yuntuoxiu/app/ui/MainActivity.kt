@@ -27,6 +27,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.yuntuoxiu.app.LogStore
 import com.yuntuoxiu.app.R
 import com.yuntuoxiu.app.data.SubmitResult
+import com.yuntuoxiu.app.data.TaskGroup
 import com.yuntuoxiu.app.data.TaskMetaView
 import com.yuntuoxiu.app.data.TaskRepository
 import com.yuntuoxiu.app.shizuku.ShizukuClient
@@ -359,11 +360,12 @@ class MainActivity : AppCompatActivity() {
         private const val REQ_PICK_APK = 100
     }
 
-    // ---------- 任务列表适配器 ----------
+    // ---------- 任务列表适配器（带图标 + 三状态徽章）----------
     inner class TaskAdapter(private val onClick: (TaskMetaView) -> Unit) :
         RecyclerView.Adapter<TaskAdapter.VH>() {
 
         private var items: List<TaskMetaView> = emptyList()
+        private val iconCache = HashMap<String, Drawable?>()
 
         fun submit(list: List<TaskMetaView>) {
             items = list
@@ -379,16 +381,76 @@ class MainActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val t = items[position]
-            holder.name.text = t.sourceApk.substringAfterLast('/')
+
+            // 1) 图标：优先按包名查已安装应用
+            val icon = lookupIcon(t.lookupPackage)
+            if (icon != null) {
+                holder.icon.setImageDrawable(icon)
+                holder.icon.visibility = View.VISIBLE
+            } else {
+                holder.icon.setImageDrawable(null)
+                holder.icon.visibility = View.GONE
+            }
+
+            // 2) 应用名（有包名时优先显示应用名，否则显示文件名）
+            val appName = lookupAppLabel(t.lookupPackage)
+            holder.name.text = appName ?: t.displayName
+
+            // 3) 状态（详细状态 + 壳标签）
             holder.state.text = "[${t.stateLabel}] 壳: ${t.shellLabel}"
-            holder.code.text = t.failCode?.let { "fail: $it" } ?: t.taskId
+
+            // 4) 任务 id / 失败码
+            holder.code.text = t.failCode?.let { "fail: $it  |  ${t.taskId}" } ?: t.taskId
+
+            // 5) 三状态徽章
+            when (t.group) {
+                TaskGroup.PROCESSING -> {
+                    holder.badge.text = "处理中"
+                    holder.badge.setBackgroundResource(R.drawable.badge_processing)
+                }
+                TaskGroup.SUCCESS -> {
+                    holder.badge.text = "处理成功"
+                    holder.badge.setBackgroundResource(R.drawable.badge_success)
+                }
+                TaskGroup.FAILED -> {
+                    holder.badge.text = "处理失败"
+                    holder.badge.setBackgroundResource(R.drawable.badge_failed)
+                }
+            }
+
             holder.itemView.setOnClickListener { onClick(t) }
         }
 
+        /** 按包名查图标（带缓存） */
+        private fun lookupIcon(pkg: String?): Drawable? {
+            if (pkg.isNullOrBlank()) return null
+            if (iconCache.containsKey(pkg)) return iconCache[pkg]
+            val icon = try {
+                packageManager.getApplicationIcon(pkg)
+            } catch (e: Throwable) {
+                null
+            }
+            iconCache[pkg] = icon
+            return icon
+        }
+
+        /** 按包名查应用显示名 */
+        private fun lookupAppLabel(pkg: String?): String? {
+            if (pkg.isNullOrBlank()) return null
+            return try {
+                val ai = packageManager.getApplicationInfo(pkg, 0)
+                ai.loadLabel(packageManager).toString()
+            } catch (e: Throwable) {
+                null
+            }
+        }
+
         inner class VH(v: View) : RecyclerView.ViewHolder(v) {
+            val icon: ImageView = v.findViewById(R.id.ivTaskIcon)
             val name: TextView = v.findViewById(R.id.tvName)
             val state: TextView = v.findViewById(R.id.tvState)
             val code: TextView = v.findViewById(R.id.tvCode)
+            val badge: TextView = v.findViewById(R.id.tvBadge)
         }
     }
 }
