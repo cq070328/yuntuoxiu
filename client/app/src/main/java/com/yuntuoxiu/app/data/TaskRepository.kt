@@ -183,14 +183,16 @@ object TaskRepository {
      */
     fun findLatestTaskId(): String? {
         return try {
-            val all = File(tasksRoot).listFiles() ?: return null
-            var best: File? = null
-            for (f in all) {
-                if (!f.isDirectory) continue
-                if (!f.name.startsWith("t_")) continue
-                if (best == null || f.name > best.name) best = f
+            // 用 list() 返回 Array<String>，避免 listFiles() 的重载歧义
+            val names = File(tasksRoot).list() ?: return null
+            var best: String? = null
+            for (n in names) {
+                if (!n.startsWith("t_")) continue
+                // 只认目录
+                if (!File(tasksRoot, n).isDirectory) continue
+                if (best == null || n > best!!) best = n
             }
-            best?.name
+            best
         } catch (t: Throwable) {
             null
         }
