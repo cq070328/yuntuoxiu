@@ -46,24 +46,26 @@ class YunTuoXiuApp : Application() {
             LogStore.e("YunTuoXiuApp", "自动启动 Worker 失败: ${t.message}")
         }
 
-        // 【新增】Termux 环境自检 + 自动搭建（若有 Termux）
-        // 在后台线程执行，不阻塞启动
+        // 【v1.6.1】本地引擎自检（在后台线程，不阻塞启动）
+        // ⚠️ 已移除 Termux 自动探测（Termux 现为「可选后端」，
+        //    不再在启动时触发，避免无用日志 + 延迟）
         Thread {
             try {
-                if (com.yuntuoxiu.app.worker.TermuxBridge.isTermuxInstalled(this)) {
-                    // 检查 bootstrap 脚本存在性 + 触发（幂等）
-                    val boot = java.io.File("$WORKSPACE_ROOT/termux_bootstrap.sh")
-                    if (boot.exists()) {
-                        LogStore.i("YunTuoXiuApp", "检测到 Termux，触发环境自检/搭建")
-                        com.yuntuoxiu.app.worker.TermuxBridge.ensureEnvironment(this)
-                    } else {
-                        LogStore.w("YunTuoXiuApp", "bootstrap 脚本缺失: ${boot.absolutePath}")
-                    }
+                val ws = WORKSPACE_ROOT
+                val checks = listOf(
+                    "NPatch素材" to "$ws/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex",
+                    "脱壳模块" to "$ws/ytx-tools/ytxdump-module.apk",
+                    "注入器" to "$ws/ytx_npatch_inject.sh"
+                )
+                val missing = checks.filter { !java.io.File(it.second).exists() }
+                if (missing.isEmpty()) {
+                    LogStore.i("YunTuoXiuApp", "✅ 本地引擎就绪（可全自动脱壳）")
                 } else {
-                    LogStore.i("YunTuoXiuApp", "未检测到 Termux，跳过环境搭建")
+                    LogStore.w("YunTuoXiuApp",
+                        "本地引擎缺: ${missing.joinToString("/") { it.first }}")
                 }
             } catch (t: Throwable) {
-                LogStore.e("YunTuoXiuApp", "Termux 环境自检失败: ${t.message}")
+                LogStore.e("YunTuoXiuApp", "本地引擎自检失败: ${t.message}")
             }
         }.start()
     }
