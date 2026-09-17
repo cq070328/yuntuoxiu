@@ -74,14 +74,16 @@ object LogStore {
         }
     }
 
-    /** 读取全部日志（供 UI 显示），倒序（最新在前） */
+    /** 读取全部日志（供 UI 显示）—— v1.6.6 修正：旧→新（最新在底部） */
     @Synchronized
     fun readAll(): String {
         return try {
             if (privateFile.exists()) {
-                privateFile.readLines().takeLast(MAX_LINES).reversed().joinToString("\n")
+                // ⚠️ 不要 .reversed()（那是「新在顶」）；
+                //    要「旧→新」，最新一行在文件末尾，直接 join
+                privateFile.readLines().takeLast(MAX_LINES).joinToString("\n")
             } else {
-                buffer.reversed().joinToString("\n")
+                buffer.joinToString("\n")
             }
         } catch (t: Throwable) {
             "读取日志失败: ${t.message}"

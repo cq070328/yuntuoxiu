@@ -195,7 +195,7 @@ class TaskDetailActivity : AppCompatActivity() {
                 // ⭐ v1.6.4 产物卡片
                 updateOutputCard(task)
 
-                // 日志
+                // ⭐ v1.6.6 日志：旧→新（最新在底部）
                 tvLog.text = if (log.isBlank()) "（无日志）" else log.takeLast(8000)
             } catch (t: Throwable) {
                 LogStore.e(TAG, "load 异常: ${t.message}")

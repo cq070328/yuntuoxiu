@@ -221,8 +221,17 @@ object TaskRepository {
     }
 
     /**
-     * 删除任务（递归删 tasks/<tid> 与 logs/<tid>）
-     * 注意：仅删除该任务自己的目录，不影响其他任务。
+     * 删除任务（v1.6.6：连带删除「产物 APK」）
+     *
+     * 删除范围：
+     *   ① tasks/<tid>/                     任务全部文件
+     *   ② logs/<tid>/                      任务日志
+     *   ③ /apks/云脱修-<tid>.apk           构建产物
+     *   ④ /apks/云脱修-<tid>-oc.apk        一键脱修产物
+     *   ⑤ tasks/<tid>/build 下的 apk         中间产物
+     *   ⑥ uploads/installed_<pkg>.apk      上传副本（按包名，若不再被其他任务引用）
+     *
+     * ⚠️ 不存在则跳过（不报错）
      */
     fun deleteTask(taskId: String): SubmitResult {
         return try {
@@ -230,16 +239,66 @@ object TaskRepository {
             if (taskId.contains("/") || taskId.contains("..")) {
                 return SubmitResult.Failure("非法 task_id")
             }
+
+            // ⭐ 先读包名（用于清理 uploads 副本）
+            val pkg = try {
+                val mf = File(tasksRoot, "$taskId/meta/task_meta.json")
+                if (mf.exists())
+                    gson.fromJson(mf.readText(), TaskMetaView::class.java)?.packageName
+                else null
+            } catch (_: Throwable) { null }
+
             var deleted = 0
+            val extras = mutableListOf<String>()
+
+            // ① 任务目录
             val td = File(tasksRoot, taskId)
             if (td.exists()) {
                 if (td.deleteRecursively()) deleted++ else
                     return SubmitResult.Failure("删除任务目录失败")
             }
+            // ② 日志
             val ld = File(logsRoot, taskId)
-            if (ld.exists()) {
-                ld.deleteRecursively()
+            if (ld.exists()) ld.deleteRecursively()
+
+            // ③④ 产物 APK（工作区根 + 任务 build 目录）
+            val wsRoot = YunTuoXiuApp.WORKSPACE_ROOT
+            val outCandidates = listOf(
+                "$wsRoot/云脱修-$taskId.apk",
+                "$wsRoot/云脱修-$taskId-oc.apk",
+                "$wsRoot/$taskId-out.apk",
+                "$wsRoot/云脱修-$taskId.apk.idsig",
+                "$wsRoot/云脱修-$taskId-oc.apk.idsig"
+            )
+            for (p in outCandidates) {
+                try {
+                    val f = File(p)
+                    if (f.exists() && f.delete()) extras.add(f.name)
+                } catch (_: Throwable) {}
             }
+
+            // ⑤ 任务 build 目录下的 apk（若 tasks 目录删失败时兜底）
+            try {
+                val b = File(tasksRoot, "$taskId/build")
+                if (b.exists()) b.listFiles()?.forEach { f ->
+                    if (f.name.endsWith(".apk") && f.delete()) extras.add(f.name)
+                }
+            } catch (_: Throwable) {}
+
+            // ⑥ uploads 副本（按包名；且确认无其他任务引用同包名）
+            if (!pkg.isNullOrBlank()) {
+                try {
+                    val stillUsed = listTasks().any {
+                        it.packageName == pkg && it.taskId != taskId
+                    }
+                    if (!stillUsed) {
+                        val up = File(uploadsRoot, "installed_${pkg}.apk")
+                        if (up.exists() && up.delete()) extras.add(up.name)
+                        // 通配 picked_*.apk（无法精确对应，保守不删）
+                    }
+                } catch (_: Throwable) {}
+            }
+
             // 从幂等索引里移除（若有）
             try {
                 val idem = File(YunTuoXiuApp.CLOUD_ROOT, "idem_index.json")
@@ -256,7 +315,8 @@ object TaskRepository {
                     }
                 }
             } catch (_: Throwable) {}
-            Log.i(TAG, "已删除任务 $taskId (删了 $deleted 个目录)")
+
+            Log.i(TAG, "已删除任务 $taskId (目录 $deleted, 附加文件 ${extras.size}: $extras)")
             SubmitResult.Success(taskId)
         } catch (t: Throwable) {
             SubmitResult.Failure("删除异常: ${t.message}")

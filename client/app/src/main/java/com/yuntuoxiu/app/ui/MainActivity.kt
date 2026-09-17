@@ -939,7 +939,11 @@ class MainActivity : AppCompatActivity() {
     private fun confirmDeleteTask(task: TaskMetaView) {
         showConfirmDialog("删除任务",
             "确认删除任务「${task.displayName}」？\n\n" +
-            "将删除该任务的所有文件（原始副本/dump/修复产物/日志）。\n此操作不可恢复。",
+            "将删除：\n" +
+            "· 任务全部文件（原始副本/dump/修复产物）\n" +
+            "· 该任务产生的安装包（云脱修-*.apk）\n" +
+            "· 上传的 APK 副本（若无其他任务使用）\n\n" +
+            "此操作不可恢复。",
             "删除", danger = true) {
             doDeleteTask(task)
         }
