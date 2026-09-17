@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 任务列表项（v1.6.2：圆角卡片 + 按压反馈） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:layout_marginStart="12dp"
+    android:layout_marginEnd="12dp"
+    android:layout_marginTop="8dp"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:padding="10dp"
-    android:background="?android:attr/selectableItemBackground">
+    android:padding="12dp"
+    android:background="@drawable/bg_task_item">
 
     <!-- 应用图标 -->
     <ImageView
@@ -28,45 +32,49 @@
             android:layout_height="wrap_content"
             android:textSize="15sp"
             android:textStyle="bold"
+            android:textColor="#E6EDF3"
             android:singleLine="true"
-            android:ellipsize="end" />
+            android:ellipsize="end"
+            android:text="应用名" />
 
         <TextView
             android:id="@+id/tvState"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textSize="12sp"
-            android:alpha="0.7"
-            android:paddingTop="2dp"
+            android:textColor="#8B949E"
+            android:paddingTop="3dp"
             android:singleLine="true"
-            android:ellipsize="end" />
+            android:ellipsize="end"
+            android:text="状态" />
 
         <TextView
             android:id="@+id/tvCode"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textSize="10sp"
-            android:alpha="0.5"
-            android:paddingTop="1dp"
+            android:textColor="#6E7681"
+            android:paddingTop="2dp"
             android:singleLine="true"
-            android:ellipsize="middle" />
+            android:ellipsize="middle"
+            android:text="taskId" />
     </LinearLayout>
 
-    <!-- 右侧：三状态徽章 -->
+    <!-- 右侧：三状态徽章（圆角胶囊） -->
     <TextView
         android:id="@+id/tvBadge"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:minWidth="64dp"
+        android:minWidth="60dp"
         android:gravity="center"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="5dp"
+        android:paddingBottom="5dp"
         android:textSize="11sp"
         android:textStyle="bold"
         android:textColor="#FFFFFF"
-        android:background="#666666"
+        android:background="@drawable/bg_badge"
         android:text="处理中" />
 
 </LinearLayout>

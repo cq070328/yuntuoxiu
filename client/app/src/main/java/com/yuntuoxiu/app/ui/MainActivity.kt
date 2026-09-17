@@ -482,19 +482,27 @@ class MainActivity : AppCompatActivity() {
                     log.append("[$stage] 跳过（非加固）\n")
                 }
 
-                // ---------- ③ CLI 注入（NPatch + 模块） ----------
+                // ---------- ③ CLI 注入（委托容器） ----------
                 stage = "3/7 注入脱壳模块"
+                if (!com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()) {
+                    fail("容器 worker 未运行。\n\n" +
+                        "注入/构建需要容器（有 bash+java+python3），\n" +
+                        "而 Shizuku shell 没有这些。\n\n" +
+                        "解决：在 Operit 终端执行：\n" +
+                        "  bash /sdcard/MT2/apks/ytx.sh start\n\n" +
+                        "（或点长按「本地引擎」查看心跳）")
+                    return@launch
+                }
                 log.append("[$stage] …（可能 1-3 分钟）\n")
                 val injected = File(taskDir, "injected.apk")
-                val injectCmd = "bash $ws/ytx_npatch_inject.sh " +
-                        "'$workApk' '${injected.absolutePath}' '$pkg' " +
-                        "--modules '$ws/ytx-tools/ytxdump-module.apk' 2>&1 | tail -8"
-                val injOut = withContext(Dispatchers.IO) {
-                    ShizukuShellExecutor.execWithTimeout(injectCmd, 600_000)
-                        .getString("stdout") ?: ""
-                }
-                if (!injected.exists() || injected.length() < 1024) {
-                    fail("注入失败\n$injOut"); return@launch
+                val (injOk, injDetail, _) = com.yuntuoxiu.app.worker.ContainerBridge.execSync(
+                    "$ws/ytx_npatch_inject.sh",
+                    listOf(workApk, injected.absolutePath, pkg,
+                           "--modules", "$ws/ytx-tools/ytxdump-module.apk"),
+                    600_000
+                )
+                if (!injOk || !injected.exists() || injected.length() < 1024) {
+                    fail("注入失败\n$injDetail"); return@launch
                 }
                 log.append("  ✅ 注入产物 ${injected.length() / 1024}KB\n")
 
@@ -548,18 +556,17 @@ class MainActivity : AppCompatActivity() {
                 }
                 log.append("  已收集到 ${dumpDir.absolutePath}\n")
 
-                // ---------- ⑦ 构建 ----------
+                // ---------- ⑦ 构建（委托容器：替换+对齐+签名） ----------
                 stage = "7/7 构建（替换+对齐+签名）"
                 log.append("[$stage] …\n")
                 val outApk = File("$ws/云脱修-$tid-oc.apk")
-                val buildCmd = "bash $ws/ytx_build_from_dump.sh " +
-                        "'${task.sourceApk}' '${dumpDir.absolutePath}' '${outApk.absolutePath}' 2>&1 | tail -6"
-                val bOut = withContext(Dispatchers.IO) {
-                    ShizukuShellExecutor.execWithTimeout(buildCmd, 900_000)
-                        .getString("stdout") ?: ""
-                }
-                if (!outApk.exists() || outApk.length() < 1024) {
-                    fail("构建失败\n$bOut"); return@launch
+                val (bOk, bDetail, _) = com.yuntuoxiu.app.worker.ContainerBridge.execSync(
+                    "$ws/ytx_build_from_dump.sh",
+                    listOf(task.sourceApk, dumpDir.absolutePath, outApk.absolutePath),
+                    900_000
+                )
+                if (!bOk || !outApk.exists() || outApk.length() < 1024) {
+                    fail("构建失败\n$bDetail"); return@launch
                 }
                 log.append("  ✅ 产物: ${outApk.absolutePath}\n")
                 log.append("  （${outApk.length() / 1024}KB）\n")
@@ -1151,8 +1158,15 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val log = withContext(Dispatchers.IO) { LogStore.readAll() }
-                tvLog.text = if (log.isBlank()) "（暂无日志）" else log
-                svLog.post { svLog.scrollTo(0, 0) }
+                val text = if (log.isBlank()) "（暂无日志）" else log
+                // ⭐ v1.6.2：内容没变则不更新（避免频繁重绘）
+                if (tvLog.tag == text) return@launch
+                tvLog.tag = text
+                tvLog.text = text
+                // ⭐ 关键修复：滚到「最底部」（最新日志在下面）
+                svLog.post {
+                    svLog.fullScroll(android.view.View.FOCUS_DOWN)
+                }
             } catch (t: Throwable) {
                 tvLog.text = "日志刷新失败: ${t.message}"
             }
@@ -1178,8 +1192,8 @@ class MainActivity : AppCompatActivity() {
                 try {
                     // 任务列表刷新（内部更新 hasActiveTask 字段）
                     refreshTasks()
-                    // 日志刷新慢（约 3 个周期一次）
-                    if (tick % 3 == 0) refreshLog()
+                    // ⭐ v1.6.2：日志降频（6 周期一次；内容不变时 refreshLog 内部已跳过）
+                    if (tick % 6 == 0) refreshLog()
                     tick++
                 } catch (t: Throwable) {
                     LogStore.e(TAG, "自动刷新异常: ${t.message}")

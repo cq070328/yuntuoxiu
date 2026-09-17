@@ -28,6 +28,28 @@
 
         <!-- 按钮圆角 -->
         <item name="materialButtonStyle">@style/YtxButton</item>
+
+        <!-- ⭐ v1.6.2：统一弹窗圆角（所有 AlertDialog 生效） -->
+        <item name="materialAlertDialogTheme">@style/YtxDialog</item>
+        <item name="alertDialogTheme">@style/YtxDialog</item>
+
+        <!-- ⭐ 卡片/列表项圆角 -->
+        <item name="android:listDivider">@null</item>
+    </style>
+
+    <!-- ⭐ v1.6.2 弹窗样式（圆角 16dp + GitHub 暗色） -->
+    <style name="YtxDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="shapeAppearanceOverlay">@style/YtxDialogShape</item>
+        <item name="android:background">@drawable/bg_dialog</item>
+        <item name="colorSurface">#161B22</item>
+        <item name="colorOnSurface">#E6EDF3</item>
+        <item name="colorPrimary">#58A6FF</item>
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
+    </style>
+
+    <style name="YtxDialogShape" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">16dp</item>
     </style>
 
     <!-- 主按钮样式（圆角 + 紧凑） -->
