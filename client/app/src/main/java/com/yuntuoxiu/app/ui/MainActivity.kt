@@ -15,7 +15,10 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -40,6 +43,12 @@ import java.io.File
 
 /**
  * 云脱修 主界面
+ *
+ * 功能：
+ *  - Shizuku 授权 / Worker 启停
+ *  - 任务列表（图标 + 应用名 + 三状态徽章 + 长按菜单）
+ *  - 选择 APK（文件 / 已安装应用，带搜索）
+ *  - 内嵌实时日志 + 清除日志
  */
 class MainActivity : AppCompatActivity() {
 
@@ -51,7 +60,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: TaskAdapter
     private var refreshing = false
 
-    /** 应用列表项（带图标） */
+    /** 应用列表项 */
     private data class AppItem(
         val label: String,
         val packageName: String,
@@ -71,10 +80,12 @@ class MainActivity : AppCompatActivity() {
         tvLog = findViewById(R.id.tvLog)
         svLog = findViewById(R.id.svLog)
 
-        adapter = TaskAdapter { task -> openDetail(task) }
+        adapter = TaskAdapter(
+            onClick = { task -> openDetail(task) },
+            onLongClick = { task -> showTaskMenu(task) },
+        )
         rvTasks.layoutManager = LinearLayoutManager(this)
         rvTasks.adapter = adapter
-        LogStore.i(TAG, "视图初始化完成")
 
         findViewById<View>(R.id.btnGrantShizuku).setOnClickListener {
             if (ShizukuClient.isGranted()) {
@@ -98,9 +109,21 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        LogStore.i(TAG, "准备请求权限")
+        // 【新增】清除日志按钮
+        findViewById<View>(R.id.btnClearLog).setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("清除日志")
+                .setMessage("确认清除全部运行日志？")
+                .setPositiveButton("清除") { _, _ ->
+                    LogStore.clear()
+                    refreshLog()
+                    Toast.makeText(this, "日志已清除", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+
         requestPermissionsIfNeeded()
-        LogStore.i(TAG, "启动自动刷新循环")
         startAutoRefresh()
         LogStore.i(TAG, "MainActivity.onCreate 完成")
     }
@@ -112,7 +135,48 @@ class MainActivity : AppCompatActivity() {
         else "⚠️ Shizuku 未授权"
         refreshTasks()
         refreshLog()
-        LogStore.i(TAG, "onResume 刷新完成")
+    }
+
+    // ---------------- 任务长按菜单 ----------------
+
+    /** 长按任务：左「取消」右「删除」 */
+    private fun showTaskMenu(task: TaskMetaView) {
+        AlertDialog.Builder(this)
+            .setTitle("任务：${task.displayName}")
+            .setMessage("状态：${task.stateLabel}\n壳：${task.shellLabel}\n${task.taskId}")
+            .setNegativeButton("取消") { d, _ -> d.dismiss() }
+            .setPositiveButton("删除") { _, _ -> confirmDeleteTask(task) }
+            .show()
+    }
+
+    /** 删除任务确认 */
+    private fun confirmDeleteTask(task: TaskMetaView) {
+        AlertDialog.Builder(this)
+            .setTitle("删除任务")
+            .setMessage("确认删除任务「${task.displayName}」？\n\n" +
+                    "将删除该任务的所有文件（原始副本/dump/修复产物/日志）。\n此操作不可恢复。")
+            .setPositiveButton("删除") { _, _ -> doDeleteTask(task) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun doDeleteTask(task: TaskMetaView) {
+        lifecycleScope.launch {
+            val r = withContext(Dispatchers.IO) {
+                TaskRepository.deleteTask(task.taskId)
+            }
+            when (r) {
+                is SubmitResult.Success -> {
+                    LogStore.i(TAG, "已删除任务: ${task.taskId}")
+                    Toast.makeText(this@MainActivity, "已删除：${task.displayName}", Toast.LENGTH_SHORT).show()
+                    refreshTasks()
+                }
+                is SubmitResult.Failure -> {
+                    LogStore.e(TAG, "删除失败: ${r.reason}")
+                    Toast.makeText(this@MainActivity, "删除失败: ${r.reason}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     // ---------------- 选择 APK ----------------
@@ -134,7 +198,7 @@ class MainActivity : AppCompatActivity() {
         startActivityForResult(intent, REQ_PICK_APK)
     }
 
-    /** 从已安装应用选择（带图标 + 中文名优先） */
+    /** 从已安装应用选择（带图标 + 搜索 + 中文优先 + 排除系统应用） */
     private fun pickApkFromInstalled() {
         lifecycleScope.launch {
             Toast.makeText(this@MainActivity, "正在加载应用列表...", Toast.LENGTH_SHORT).show()
@@ -142,16 +206,26 @@ class MainActivity : AppCompatActivity() {
                 try {
                     val pm = packageManager
                     pm.getInstalledApplications(PackageManager.GET_META_DATA)
-                        .filter { it.packageName != packageName }
+                        .filter { ai ->
+                            // 排除自己
+                            if (ai.packageName == packageName) return@filter false
+                            // 【新增】排除系统应用（FLAG_SYSTEM = 1）
+                            val isSystem = (ai.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+                            if (isSystem) return@filter false
+                            true
+                        }
                         .map { ai ->
+                            // 【修复】label 兜底：为空则用包名
+                            val rawLabel = try {
+                                ai.loadLabel(pm)?.toString()?.trim()
+                            } catch (e: Throwable) { null }
                             AppItem(
-                                label = ai.loadLabel(pm).toString(),
+                                label = rawLabel?.takeIf { it.isNotBlank() } ?: ai.packageName,
                                 packageName = ai.packageName,
-                                sourceDir = ai.sourceDir,
+                                sourceDir = ai.sourceDir ?: "",
                                 icon = try { ai.loadIcon(pm) } catch (e: Throwable) { null },
                             )
                         }
-                        // 中文名优先：含 CJK 的排前面，其余按字母
                         .sortedWith(compareByDescending<AppItem> { containsCJK(it.label) }
                             .thenBy { it.label })
                 } catch (t: Throwable) {
@@ -159,7 +233,7 @@ class MainActivity : AppCompatActivity() {
                     emptyList()
                 }
             }
-            LogStore.i(TAG, "已加载 ${apps.size} 个应用")
+            LogStore.i(TAG, "已加载 ${apps.size} 个第三方应用")
             if (apps.isEmpty()) {
                 Toast.makeText(this@MainActivity, "未获取到应用列表", Toast.LENGTH_LONG).show()
                 return@launch
@@ -168,36 +242,81 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 显示带图标的应用选择对话框 */
-    private fun showAppListDialog(apps: List<AppItem>) {
-        val iconSize = (resources.displayMetrics.density * 40).toInt()
+    /** 应用选择对话框（带搜索框） */
+    private fun showAppListDialog(allApps: List<AppItem>) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), 0)
+        }
+
+        // 搜索框
+        val editSearch = EditText(this).apply {
+            hint = "搜索应用名 / 包名"
+            isSingleLine = true
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        container.addView(editSearch)
+
+        // 列表
+        val listView = ListView(this)
+        container.addView(listView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        val shown = ArrayList<AppItem>(allApps)
         val listAdapter = object : BaseAdapter() {
-            override fun getCount() = apps.size
-            override fun getItem(position: Int) = apps[position]
+            override fun getCount() = shown.size
+            override fun getItem(position: Int) = shown[position]
             override fun getItemId(position: Int) = position.toLong()
 
             override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
                 val v = convertView ?: LayoutInflater.from(this@MainActivity)
                     .inflate(R.layout.item_app, parent, false)
-                val item = apps[position]
+                val item = shown[position]
                 val iv = v.findViewById<ImageView>(R.id.ivAppIcon)
                 val tvName = v.findViewById<TextView>(R.id.tvAppName)
                 val tvPkg = v.findViewById<TextView>(R.id.tvAppPkg)
-                tvName.text = item.label
+                // 名字兜底
+                tvName.text = item.label.ifBlank { item.packageName }
                 tvPkg.text = item.packageName
                 if (item.icon != null) iv.setImageDrawable(item.icon) else iv.setImageDrawable(null)
                 return v
             }
         }
+        listView.adapter = listAdapter
 
-        AlertDialog.Builder(this)
-            .setTitle("选择已安装应用（${apps.size} 个）")
-            .setAdapter(listAdapter) { _, which ->
-                val item = apps[which]
-                submitInstalledApp(item.label, item.packageName, item.sourceDir)
+        // 搜索联动
+        editSearch.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
+                val q = s?.toString()?.trim()?.lowercase() ?: ""
+                shown.clear()
+                if (q.isEmpty()) {
+                    shown.addAll(allApps)
+                } else {
+                    allApps.forEach {
+                        if (it.label.lowercase().contains(q) ||
+                            it.packageName.lowercase().contains(q)) {
+                            shown.add(it)
+                        }
+                    }
+                }
+                listAdapter.notifyDataSetChanged()
             }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("选择已安装应用（${allApps.size} 个）")
+            .setView(container)
             .setNegativeButton("取消", null)
-            .show()
+            .create()
+
+        listView.setOnItemClickListener { _, _, pos, _ ->
+            val item = shown[pos]
+            dialog.dismiss()
+            submitInstalledApp(item.label, item.packageName, item.sourceDir)
+        }
+        dialog.show()
     }
 
     private fun submitInstalledApp(label: String, pkg: String, srcDir: String) {
@@ -256,7 +375,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ---------------- 日志（内嵌实时刷新） ----------------
+    // ---------------- 日志 ----------------
 
     private fun refreshLog() {
         lifecycleScope.launch {
@@ -343,26 +462,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 判断字符串是否含中日韩字符（用于中文优先排序） */
     private fun containsCJK(s: String): Boolean {
         for (c in s) {
-            if (c.code in 0x4E00..0x9FFF ||   // CJK 统一表意
-                c.code in 0x3400..0x4DBF ||   // 扩展 A
-                c.code in 0x3040..0x30FF) {   // 日文假名
-                return true
-            }
+            if (c.code in 0x4E00..0x9FFF || c.code in 0x3400..0x4DBF ||
+                c.code in 0x3040..0x30FF) return true
         }
         return false
     }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     companion object {
         private const val TAG = "MainActivity"
         private const val REQ_PICK_APK = 100
     }
 
-    // ---------- 任务列表适配器（带图标 + 三状态徽章）----------
-    inner class TaskAdapter(private val onClick: (TaskMetaView) -> Unit) :
-        RecyclerView.Adapter<TaskAdapter.VH>() {
+    // ---------- 任务列表适配器（图标 + 应用名 + 徽章 + 长按）----------
+    inner class TaskAdapter(
+        private val onClick: (TaskMetaView) -> Unit,
+        private val onLongClick: (TaskMetaView) -> Unit,
+    ) : RecyclerView.Adapter<TaskAdapter.VH>() {
 
         private var items: List<TaskMetaView> = emptyList()
         private val iconCache = HashMap<String, Drawable?>()
@@ -382,27 +501,19 @@ class MainActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: VH, position: Int) {
             val t = items[position]
 
-            // 1) 图标：优先按包名查已安装应用
             val icon = lookupIcon(t.lookupPackage)
             if (icon != null) {
                 holder.icon.setImageDrawable(icon)
                 holder.icon.visibility = View.VISIBLE
             } else {
-                holder.icon.setImageDrawable(null)
                 holder.icon.visibility = View.GONE
             }
 
-            // 2) 应用名（有包名时优先显示应用名，否则显示文件名）
             val appName = lookupAppLabel(t.lookupPackage)
             holder.name.text = appName ?: t.displayName
-
-            // 3) 状态（详细状态 + 壳标签）
             holder.state.text = "[${t.stateLabel}] 壳: ${t.shellLabel}"
-
-            // 4) 任务 id / 失败码
             holder.code.text = t.failCode?.let { "fail: $it  |  ${t.taskId}" } ?: t.taskId
 
-            // 5) 三状态徽章
             when (t.group) {
                 TaskGroup.PROCESSING -> {
                     holder.badge.text = "处理中"
@@ -419,27 +530,26 @@ class MainActivity : AppCompatActivity() {
             }
 
             holder.itemView.setOnClickListener { onClick(t) }
+            // 【新增】长按菜单
+            holder.itemView.setOnLongClickListener {
+                onLongClick(t)
+                true
+            }
         }
 
-        /** 按包名查图标（带缓存） */
         private fun lookupIcon(pkg: String?): Drawable? {
             if (pkg.isNullOrBlank()) return null
             if (iconCache.containsKey(pkg)) return iconCache[pkg]
-            val icon = try {
-                packageManager.getApplicationIcon(pkg)
-            } catch (e: Throwable) {
-                null
-            }
+            val icon = try { packageManager.getApplicationIcon(pkg) } catch (e: Throwable) { null }
             iconCache[pkg] = icon
             return icon
         }
 
-        /** 按包名查应用显示名 */
         private fun lookupAppLabel(pkg: String?): String? {
             if (pkg.isNullOrBlank()) return null
             return try {
-                val ai = packageManager.getApplicationInfo(pkg, 0)
-                ai.loadLabel(packageManager).toString()
+                packageManager.getApplicationInfo(pkg, 0)
+                    .loadLabel(packageManager).toString().takeIf { it.isNotBlank() }
             } catch (e: Throwable) {
                 null
             }
