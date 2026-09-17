@@ -24,27 +24,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 缓存 Gradle（关键提速点）
-      - name: 缓存 Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('client/**/*.gradle*', 'client/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
-
-      # 缓存 Android SDK（关键提速点）
+      # ⚡ 缓存 Android SDK（key 固定 -> 首次后长期命中，省去每次下载）
       - name: 缓存 Android SDK
         id: cache-sdk
         uses: actions/cache@v4
         with:
           path: ~/android-sdk
-          key: android-sdk-34-v1
+          key: android-sdk-34-v2
 
+      # ⚡ Gradle 设置（v4 自带 build-cache + configuration-cache）
       - name: 设置 Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
@@ -76,9 +66,14 @@ jobs:
         working-directory: client
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
+      # ⚡ 提速核心：去掉 --no-daemon（-20~40%），加 --build-cache + --parallel
       - name: 编译 Debug APK
         working-directory: client
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          gradle assembleDebug \
+            --build-cache \
+            --parallel \
+            --stacktrace
 
       - name: 上传 APK
         if: success()
