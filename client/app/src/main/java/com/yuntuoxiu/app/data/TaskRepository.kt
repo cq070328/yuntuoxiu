@@ -80,12 +80,28 @@ object TaskRepository {
     fun submitTask(context: android.content.Context, sourceApk: File,
                    allowAutoDegrade: Boolean): SubmitResult {
         return try {
-            if (!sourceApk.exists()) return SubmitResult.Failure("APK 文件不存在")
+            // ⚠️ v1.7.0 修复：FUSE 下 File.exists() 不可靠（可能返回 true 但实际读不了）
+            //    → 改为「实际探测可读性」
+            if (!sourceApk.exists()) return SubmitResult.Failure("APK 文件不存在: ${sourceApk.absolutePath}")
+            if (!sourceApk.canRead()) return SubmitResult.Failure("APK 不可读: ${sourceApk.absolutePath}")
+            // 探测真实可读（open 一次）
+            try {
+                sourceApk.inputStream().use { it.read() }
+            } catch (e: Throwable) {
+                return SubmitResult.Failure(
+                    "APK 无法打开（${e.message}）\n路径: ${sourceApk.absolutePath}\n" +
+                    "提示：若为已安装应用，请确认 Shizuku 已授权")
+            }
+
             uploadsRoot.mkdirs()
 
             // 1) 复制（原始文件只读约束）
             val dest = File(uploadsRoot, sourceApk.name)
-            sourceApk.copyTo(dest, overwrite = true)
+            try {
+                sourceApk.copyTo(dest, overwrite = true)
+            } catch (e: Throwable) {
+                return SubmitResult.Failure("复制到 uploads 失败: ${e.message}")
+            }
 
             // 2) 解析包名（PackageManager，最可靠）
             val pkg = try {

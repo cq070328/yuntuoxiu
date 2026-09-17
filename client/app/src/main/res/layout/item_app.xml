@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 已安装应用列表项（v1.6.6：圆角卡片 + ripple + 深色配色） -->
+<!-- 已安装应用列表项（v1.7.0 修复：去掉 clickable/focusable）
+     ⚠️ 原因：ListView 的 setOnItemClickListener 要求
+             item 根布局 **不能** clickable/focusable，
+             否则 item 会消费点击事件，导致「点击无反应」。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -9,9 +12,7 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:padding="12dp"
-    android:background="@drawable/bg_task_item"
-    android:clickable="true"
-    android:focusable="true">
+    android:background="@drawable/bg_task_item">
 
     <ImageView
         android:id="@+id/ivAppIcon"
