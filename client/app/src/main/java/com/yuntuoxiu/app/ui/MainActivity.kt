@@ -537,7 +537,9 @@ class MainActivity : AppCompatActivity() {
 
             val appName = lookupAppLabel(t.lookupPackage)
             holder.name.text = appName ?: t.displayName
-            holder.state.text = "[${t.stateLabel}] 壳: ${t.shellLabel}"
+            // 壳 + 置信度
+            val conf = t.shellConfidence?.let { " (${(it * 100).toInt()}%)" } ?: ""
+            holder.state.text = "[${t.stateLabel}] 壳: ${t.shellLabel}$conf"
             holder.code.text = t.failCode?.let { "fail: $it  |  ${t.taskId}" } ?: t.taskId
 
             when (t.group) {
