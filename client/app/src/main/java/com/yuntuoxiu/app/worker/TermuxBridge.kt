@@ -403,14 +403,27 @@ object TermuxBridge {
         return false
     }
 
-    /** 打开 Termux 并进入工作区目录（便于用户查看） */
+    /**
+     * 打开 Termux（便于用户查看）。
+     *
+     * ⚠️ v1.5.6 修复：原来走 runInTermux(background=false) 想让 Termux 切前台，
+     *    但 RUN_COMMAND 被 SecurityException 拦后回退到「文件桥」（后台），
+     *    **无法切前台** → 表现为「点击打开 Termux 无反应」。
+     *
+     *    正解：打开 App 用 startActivity 即可（**不需要任何权限**）。
+     *    顺便把要执行的命令写进命令桥，等用户打开 Termux 后 worker 会执行。
+     */
     fun openTermuxAtWorkspace(context: Context): Boolean {
-        // RUN_COMMAND 前台执行：打开 Termux 并 cd 到工作区
-        return runInTermux(
-            context,
-            "/data/data/com.termux/files/usr/bin/bash",
-            listOf("-c", "cd $WORKSPACE && exec bash"),
-            background = false
-        )
+        // ① 直接启动 Termux 主界面（无需权限，必然可行）
+        val launched = openTermux(context)
+        if (!launched) {
+            LogStore.w(TAG, "无法启动 Termux 主界面")
+        }
+        // ② 顺带把「进入工作区」的意图写入命令桥（若 worker 在跑，会执行）
+        //    注意：这只是尽力而为，不影响「打开」这个动作本身。
+        try {
+            writeCmdFile(TERMUX_BASH, listOf("-c", "cd $WORKSPACE || true"))
+        } catch (_: Throwable) {}
+        return launched
     }
 }
