@@ -18,8 +18,12 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- Worker 前台服务 -->
+    <!-- Worker 前台服务：
+         ⚠️ Android 14 (targetSdk 34) 要求：
+           声明了 service 的 foregroundServiceType 就必须同时声明对应权限，
+           否则 startForeground 会抛 SecurityException 崩溃。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -45,6 +49,7 @@
             android:name=".ui.TaskDetailActivity"
             android:exported="false" />
 
+        <!-- foregroundServiceType 与 FOREGROUND_SERVICE_DATA_SYNC 权限配套 -->
         <service
             android:name=".worker.WorkerService"
             android:exported="false"
