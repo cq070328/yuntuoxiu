@@ -31,6 +31,8 @@ object ShizukuClient {
     @Volatile private var service: IYunTuoXiuService? = null
     @Volatile private var bound = false
     @Volatile private var lastPermissionGranted = false
+    /** 是否已有一次绑定在途（防重复 bindUserService 泄漏连接） */
+    @Volatile private var bindingInFlight = false
 
     private var appContext: Context? = null
     private var healthCheckJob: Thread? = null
@@ -65,6 +67,7 @@ object ShizukuClient {
             Log.i(TAG, "UserService 已连接")
             service = IYunTuoXiuService.Stub.asInterface(binder)
             bound = true
+            bindingInFlight = false
             try {
                 service?.registerCallback(remoteCallback)
                 Log.i(TAG, "服务版本: ${service?.getVersion()}")
@@ -77,6 +80,7 @@ object ShizukuClient {
             Log.w(TAG, "UserService 连接断开")
             service = null
             bound = false
+            bindingInFlight = false
         }
     }
 
@@ -207,30 +211,38 @@ object ShizukuClient {
             Log.w(TAG, "未授权，无法绑定")
             return false
         }
-        maybeAutoBind()
-        // 绑定是异步的，短暂等待
-        val deadline = System.currentTimeMillis() + 3000
-        while (System.currentTimeMillis() < deadline) {
+        // ⚠️ 避免重复触发 bindUserService（多次绑定会泄漏连接）
+        if (!bindingInFlight) maybeAutoBind()
+        // 绑定是异步的；指数退避轮询（总上限 ~2s，比原来 3s 更短）
+        var waited = 0L
+        var step = 50L
+        val deadline = 2000L
+        while (waited < deadline) {
             if (bound && service != null) return true
             try {
-                Thread.sleep(100)
+                Thread.sleep(step)
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
                 break
             }
+            waited += step
+            step = (step * 2).coerceAtMost(400L)  // 50->100->200->400
         }
         return bound && service != null
     }
 
     private fun maybeAutoBind() {
         if (bound) return
+        if (bindingInFlight) return        // 已有绑定在途，避免重复
         if (!isGranted()) return
+        bindingInFlight = true
         try {
             // ⚠️ 官方 API（13.1.5）签名：`void bindUserService(UserServiceArgs, ServiceConnection)`
             //    —— 无返回值！绑定结果通过 connection 回调得知。
             Shizuku.bindUserService(userServiceArgs(), connection)
             Log.i(TAG, "bindUserService 已调用，等待 onServiceConnected 回调")
         } catch (e: Exception) {
+            bindingInFlight = false
             Log.w(TAG, "绑定 UserService 失败", e)
         }
     }
@@ -243,6 +255,7 @@ object ShizukuClient {
         }
         service = null
         bound = false
+        bindingInFlight = false
     }
 
     // ---------------- 高层能力封装 ----------------
