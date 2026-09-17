@@ -67,6 +67,8 @@ data class TaskMetaView(
     @SerializedName("allow_auto_degrade") val allowAutoDegrade: Boolean = true,
     @SerializedName("client_abi") val clientAbi: String? = null,
     @SerializedName("shell_tag") val shellTag: String? = null,
+    @SerializedName("shell_confidence") val shellConfidence: Double? = null,
+    @SerializedName("shell_reasons") val shellReasons: List<String> = emptyList(),
     @SerializedName("fail_code") val failCode: String? = null,
     @SerializedName("artifact_status") val artifactStatus: String? = null,
     @SerializedName("handler_trace") val handlerTrace: List<Map<String, Any?>> = emptyList(),
