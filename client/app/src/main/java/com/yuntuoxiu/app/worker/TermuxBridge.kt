@@ -71,7 +71,7 @@ object TermuxBridge {
         command: String,
         args: List<String> = emptyList(),
         background: Boolean = true,
-        workdir: String = WORKSPACE,
+        workdir: String = WORKSPACE
     ): Boolean {
         if (!isTermuxInstalled(context)) {
             LogStore.w(TAG, "Termux 未安装，无法执行")
@@ -105,7 +105,7 @@ object TermuxBridge {
             context,
             "/data/data/com.termux/files/usr/bin/bash",
             listOf(script, taskId),
-            background = background,
+            background = background
         )
     }
 
@@ -116,7 +116,7 @@ object TermuxBridge {
             context,
             "/data/data/com.termux/files/usr/bin/bash",
             listOf(script, "start"),
-            background = true,
+            background = true
         )
     }
 
@@ -127,7 +127,7 @@ object TermuxBridge {
             context,
             "/data/data/com.termux/files/usr/bin/bash",
             listOf("-c", "cd $WORKSPACE && exec bash"),
-            background = false,
+            background = false
         )
     }
 }
