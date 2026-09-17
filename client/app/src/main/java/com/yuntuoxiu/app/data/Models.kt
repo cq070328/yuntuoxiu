@@ -80,10 +80,14 @@ data class TaskMetaView(
     val isTerminal: Boolean
         get() = state in setOf("PRE_CHECK_FAILED", "SUCCESS", "FAILED", "CANCELLED")
 
+    /** 是否为 APP 本地骨架（未接管的占位任务） */
+    val isLocalSkeleton: Boolean
+        get() = localSkeleton || taskId.startsWith("local_")
+
     val stateLabel: String
         get() = when (state) {
             "PENDING_LOCAL" -> "已提交（待后端）"   // 本地骨架
-            "CREATED" -> "已创建"
+            "CREATED" -> if (isLocalSkeleton) "已提交（待后端）" else "已创建"
             "PRE_CHECKING" -> "预检中"
             "PRE_CHECK_FAILED" -> "预检失败"
             "WAIT_CLIENT" -> "等待客户端"
