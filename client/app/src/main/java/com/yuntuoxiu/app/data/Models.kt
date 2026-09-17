@@ -2,9 +2,7 @@ package com.yuntuoxiu.app.data
 
 import com.google.gson.annotations.SerializedName
 
-/**
- * action_payload 指令模型（与后端 shizuku_dump_scheduler.py 对齐）。
- */
+/** action_payload 指令模型 */
 data class ActionPayload(
     @SerializedName("seq") val seq: Int,
     @SerializedName("action") val action: String,
@@ -21,7 +19,7 @@ data class ActionResponse(
     val extra: Map<String, Any?> = emptyMap()
 )
 
-/** 分片上传 manifest（与后端 DexManifest 对齐） */
+/** 分片上传 manifest */
 data class DexManifest(
     @SerializedName("dex_name") val dexName: String,
     @SerializedName("total_chunks") val totalChunks: Int,
@@ -31,7 +29,7 @@ data class DexManifest(
     @SerializedName("declared_at") val declaredAt: Long = 0
 )
 
-/** action 类型（与后端 ActionType 对齐） */
+/** action 类型 */
 object ActionType {
     const val PRE_CHECK = "PRE_CHECK"
     const val CLEAR_TARGET = "CLEAR_TARGET"
@@ -47,7 +45,16 @@ object ActionType {
 }
 
 /**
- * 任务元数据（与后端 TaskMeta 对齐，APP 端展示用）。
+ * 任务状态分组（用于列表徽章）
+ */
+enum class TaskGroup {
+    PROCESSING,   // 处理中
+    SUCCESS,      // 处理成功
+    FAILED,       // 处理失败
+}
+
+/**
+ * 任务元数据（与后端 TaskMeta 对齐）
  */
 data class TaskMetaView(
     @SerializedName("task_id") val taskId: String,
@@ -55,6 +62,8 @@ data class TaskMetaView(
     @SerializedName("idem_key") val idemKey: String = "",
     @SerializedName("source_apk") val sourceApk: String = "",
     @SerializedName("source_apk_sha256") val sourceApkSha256: String = "",
+    @SerializedName("package_name") val packageName: String? = null,
+    @SerializedName("version_name") val versionName: String? = null,
     @SerializedName("allow_auto_degrade") val allowAutoDegrade: Boolean = true,
     @SerializedName("client_abi") val clientAbi: String? = null,
     @SerializedName("shell_tag") val shellTag: String? = null,
@@ -86,6 +95,36 @@ data class TaskMetaView(
             else -> state
         }
 
+    /**
+     * 三状态分组（用于列表徽章）
+     *  - PROCESSING：所有非终态
+     *  - SUCCESS   ：SUCCESS
+     *  - FAILED    ：FAILED / PRE_CHECK_FAILED / CANCELLED
+     */
+    val group: TaskGroup
+        get() = when (state) {
+            "SUCCESS" -> TaskGroup.SUCCESS
+            "FAILED", "PRE_CHECK_FAILED", "CANCELLED" -> TaskGroup.FAILED
+            else -> TaskGroup.PROCESSING
+        }
+
+    /** 徽章文字 */
+    val groupLabel: String
+        get() = when (group) {
+            TaskGroup.PROCESSING -> "处理中"
+            TaskGroup.SUCCESS -> "处理成功"
+            TaskGroup.FAILED -> "处理失败"
+        }
+
+    /** 用于查找应用图标（优先 package_name，回退从文件名猜） */
+    val lookupPackage: String?
+        get() = packageName?.takeIf { it.isNotBlank() }
+            ?: sourceApk.substringAfterLast('/').removeSuffix(".apk").takeIf { it.contains('.') }
+
+    /** 显示名（优先应用名/包名，回退文件名） */
+    val displayName: String
+        get() = sourceApk.substringAfterLast('/').ifBlank { taskId }
+
     val shellLabel: String
         get() = when (shellTag) {
             "NONE" -> "未加壳"
@@ -103,9 +142,7 @@ data class TaskMetaView(
         }
 }
 
-/**
- * 任务创建请求（APP -> 后端 watcher 消费）。
- */
+/** 任务创建请求 */
 data class TaskCreateRequest(
     @SerializedName("apk_path") val apkPath: String,
     @SerializedName("package") val packageName: String = "",
