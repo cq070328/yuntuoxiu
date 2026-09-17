@@ -3,13 +3,13 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:padding="12dp">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="云脱修"
-        android:textSize="24sp"
+        android:textSize="22sp"
         android:textStyle="bold" />
 
     <TextView
@@ -17,9 +17,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Shizuku 状态检查中..."
-        android:textSize="14sp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp" />
+        android:textSize="13sp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp" />
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -31,6 +31,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:textSize="12sp"
             android:text="授权 Shizuku" />
 
         <Button
@@ -38,6 +39,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:textSize="12sp"
             android:text="选择 APK" />
 
         <Button
@@ -45,22 +47,61 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:textSize="12sp"
             android:text="启动 Worker" />
     </LinearLayout>
 
     <TextView
+        android:id="@+id/tvTaskCount"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="任务列表"
-        android:textSize="16sp"
+        android:text="任务列表（0）"
+        android:textSize="14sp"
         android:textStyle="bold"
-        android:paddingTop="16dp"
+        android:paddingTop="12dp"
         android:paddingBottom="4dp" />
 
+    <!-- 任务列表（占上半部分） -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvTasks"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="3" />
+
+    <!-- 分隔线 -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#333333"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="4dp" />
+
+    <!-- 运行日志（内嵌，任务列表下方，实时滚动） -->
+    <TextView
+        android:id="@+id/tvLogHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="运行日志（实时）"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:textColor="#58A6FF" />
+
+    <ScrollView
+        android:id="@+id/svLog"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="2"
+        android:paddingTop="2dp"
+        android:scrollbars="vertical">
+
+        <TextView
+            android:id="@+id/tvLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="等待日志..."
+            android:textSize="10sp"
+            android:fontFamily="monospace"
+            android:textColor="#A0A0A0" />
+    </ScrollView>
 
 </LinearLayout>
