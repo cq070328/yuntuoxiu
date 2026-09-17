@@ -1,20 +1,7 @@
-# Gradle
 .gradle/
 build/
 */build/
 local.properties
-
-# IDE
 .idea/
 *.iml
-.vscode/
-
-# OS
 .DS_Store
-Thumbs.db
-
-# 产物
-*.apk
-*.aab
-*.keystore
-!gradle/wrapper/gradle-wrapper.jar
