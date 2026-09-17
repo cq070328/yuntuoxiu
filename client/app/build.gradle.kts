@@ -37,6 +37,10 @@ android {
 
     buildFeatures {
         viewBinding = true
+        // ⚠️ 必须显式开启 AIDL！AGP 8.x 默认关闭。
+        // 否则 src/main/aidl 下的 .aidl 不会被编译成 Java 接口，
+        // 导致 IYunTuoXiuService / IYunTuoXiuCallback 找不到。
+        aidl = true
     }
 }
 
