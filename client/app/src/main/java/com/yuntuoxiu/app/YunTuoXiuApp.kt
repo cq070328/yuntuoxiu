@@ -21,6 +21,40 @@ class YunTuoXiuApp : Application() {
 
         /** 上传目录（APP 把用户选中的 APK 复制到这里并提交创建请求） */
         const val UPLOADS_ROOT = "$CLOUD_ROOT/uploads"
+
+        // ---- v1.6.9 补充常量（消除散落的硬编码路径）----
+        /** 工具目录（apktool/apksigner/NPatch素材/脱壳模块） */
+        const val TOOLS_DIR = "$WORKSPACE_ROOT/ytx-tools"
+
+        /** 日志目录 */
+        const val LOGS_DIR = "$CLOUD_ROOT/logs"
+
+        /** 命令桥目录（APP → worker） */
+        const val CMD_DIR = "$CLOUD_ROOT/cmd"
+
+        /** 任务目录 */
+        const val TASKS_DIR = "$CLOUD_ROOT/tasks"
+
+        /** 运行日志文件（APP 侧） */
+        const val APP_LOG = "$LOGS_DIR/app_client.log"
+
+        /** worker 心跳 */
+        const val WORKER_HEARTBEAT = "$LOGS_DIR/termux_heartbeat.json"
+
+        /** 后端心跳 */
+        const val BACKEND_HEARTBEAT = "$LOGS_DIR/termux_backend_heartbeat.json"
+
+        /** token 文件（云端构建） */
+        const val TOKEN_FILE = "$WORKSPACE_ROOT/yuntuoxiu-dev/token.txt"
+
+        /** 脱壳模块 APK */
+        const val DUMP_MODULE_APK = "$TOOLS_DIR/ytxdump-module.apk"
+
+        /** NPatch 素材（metaloader 作为存在性标志） */
+        const val NPATCH_ASSETS = "$TOOLS_DIR/npatch_assets/assets/lspatch/metaloader.dex"
+
+        /** 启动命令（给用户的提示） */
+        const val START_CMD = "bash $WORKSPACE_ROOT/ytx.sh start"
     }
 
     override fun onCreate() {

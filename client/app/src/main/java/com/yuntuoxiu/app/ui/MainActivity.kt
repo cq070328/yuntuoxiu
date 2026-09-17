@@ -240,10 +240,10 @@ class MainActivity : AppCompatActivity() {
             val tv = findViewById<TextView>(R.id.tvTermuxStatus) ?: return
             val badge = findViewById<TextView>(R.id.tvServiceBadge)
 
-            val npatch = File("/sdcard/MT2/apks/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex").exists()
-            val module = File("/sdcard/MT2/apks/ytx-tools/ytxdump-module.apk").exists()
-            val injector = File("/sdcard/MT2/apks/ytx_npatch_inject.sh").exists()
-            val token = File("/sdcard/MT2/apks/yuntuoxiu-dev/token.txt").exists()
+            val npatch = File(YunTuoXiuApp.NPATCH_ASSETS).exists()
+            val module = File(YunTuoXiuApp.DUMP_MODULE_APK).exists()
+            val injector = File("${YunTuoXiuApp.WORKSPACE_ROOT}/ytx_npatch_inject.sh").exists()
+            val token = File(YunTuoXiuApp.TOKEN_FILE).exists()
 
             val ready = npatch && module && injector
 
@@ -430,13 +430,72 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "请先「选APK」创建任务", Toast.LENGTH_LONG).show()
                 return@launch
             }
+
+            // ⭐ v1.6.9：先确保 worker 在线（否则提前给出可操作提示）
+            if (!com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()) {
+                showWorkerOfflineDialog { runOneClickUnpack() }
+                return@launch
+            }
+
             val names = tasks.map { "${it.displayName}  [${it.stateLabel}]" }.toTypedArray()
             showItemsDialog(
-            "一键脱修 · 选择任务",
-            names.map { Triple("", it, "") }
-        ) { which ->
-            oneClickRun(tasks[which])
+                "一键脱修 · 选择任务",
+                names.map { Triple("", it, "") }
+            ) { which ->
+                oneClickRun(tasks[which])
+            }
         }
+    }
+
+    /**
+     * ⭐ v1.6.9 后端离线提示（可一键复制命令 / 跳转 Operit）
+     */
+    private fun showWorkerOfflineDialog(onRetry: () -> Unit) {
+        try {
+            val hb = com.yuntuoxiu.app.worker.ContainerBridge.heartbeatInfo()
+            val cmds = "bash /sdcard/MT2/apks/ytx.sh start"
+            AlertDialog.Builder(this, R.style.YtxDialog)
+                .setTitle("需要先启动后端")
+                .setMessage(
+                    "云脱修的「注入 / 构建」依赖 Operit 容器里的 bash+java+python3。\n" +
+                    "当前检测不到容器 worker。\n\n" +
+                    "心跳: $hb\n\n" +
+                    "请在 Operit 终端执行：\n" +
+                    "  $cmds\n\n" +
+                    "（点「复制命令」后粘贴到 Operit 终端）"
+                )
+                .setPositiveButton("复制命令") { _, _ ->
+                    copyToClipboard("ytx_cmd", cmds)
+                    Toast.makeText(this, "✅ 已复制，请到 Operit 终端粘贴执行",
+                        Toast.LENGTH_LONG).show()
+                }
+                .setNeutralButton("打开 Operit") { _, _ ->
+                    try {
+                        val i = packageManager.getLaunchIntentForPackage(
+                            "com.ai.assistance.operit")
+                        if (i != null) startActivity(i)
+                        else Toast.makeText(this, "未找到 Operit",
+                            Toast.LENGTH_SHORT).show()
+                    } catch (t: Throwable) {
+                        Toast.makeText(this, "打开失败: ${t.message}",
+                            Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setNegativeButton("我已启动，重试") { _, _ -> onRetry() }
+                .create().also { styleDialogWindow(it) }.show()
+        } catch (t: Throwable) {
+            showResultDialog("后端离线", "请执行：bash /sdcard/MT2/apks/ytx.sh start")
+        }
+    }
+
+    /** 复制到剪贴板（通用） */
+    private fun copyToClipboard(label: String, text: String) {
+        try {
+            val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+        } catch (t: Throwable) {
+            LogStore.w(TAG, "复制失败: ${t.message}")
         }
     }
 
