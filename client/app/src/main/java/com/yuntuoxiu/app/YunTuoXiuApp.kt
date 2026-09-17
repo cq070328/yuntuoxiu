@@ -45,6 +45,27 @@ class YunTuoXiuApp : Application() {
         } catch (t: Throwable) {
             LogStore.e("YunTuoXiuApp", "自动启动 Worker 失败: ${t.message}")
         }
+
+        // 【新增】Termux 环境自检 + 自动搭建（若有 Termux）
+        // 在后台线程执行，不阻塞启动
+        Thread {
+            try {
+                if (com.yuntuoxiu.app.worker.TermuxBridge.isTermuxInstalled(this)) {
+                    // 检查 bootstrap 脚本存在性 + 触发（幂等）
+                    val boot = java.io.File("$WORKSPACE_ROOT/termux_bootstrap.sh")
+                    if (boot.exists()) {
+                        LogStore.i("YunTuoXiuApp", "检测到 Termux，触发环境自检/搭建")
+                        com.yuntuoxiu.app.worker.TermuxBridge.ensureEnvironment(this)
+                    } else {
+                        LogStore.w("YunTuoXiuApp", "bootstrap 脚本缺失: ${boot.absolutePath}")
+                    }
+                } else {
+                    LogStore.i("YunTuoXiuApp", "未检测到 Termux，跳过环境搭建")
+                }
+            } catch (t: Throwable) {
+                LogStore.e("YunTuoXiuApp", "Termux 环境自检失败: ${t.message}")
+            }
+        }.start()
     }
 
     override fun onTerminate() {
