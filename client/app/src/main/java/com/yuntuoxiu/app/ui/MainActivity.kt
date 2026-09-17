@@ -147,9 +147,9 @@ class MainActivity : AppCompatActivity() {
             chooseBuildBackend()
         }
 
-        // 【v1.6】诊断（启动诊断：能否正常运行）
+        // 【v1.6.2】一键脱修（全自动串行）
         findViewById<View>(R.id.btnDiagnose)?.setOnClickListener {
-            runLaunchDiagnose()
+            runOneClickUnpack()
         }
 
         // 【v1.6】工具面板
@@ -393,26 +393,186 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 启动诊断（调 ytx_diag_launch.sh） */
-    private fun runLaunchDiagnose() {
+    /**
+     * ⭐ v1.6.2 一键脱修（全自动串行）
+     *
+     * 流程：
+     *   ① 壳诊断（本地 ShellDetect）
+     *   ② 壳清理（本地 cleanShellSo）→ 去壳版 APK
+     *   ③ CLI 注入 NPatch + 脱壳模块（embed）
+     *   ④ Shizuku 安装 + 启动目标
+     *   ⑤ 等待模块 dump（10-25s）
+     *   ⑥ Shizuku 收集 dump
+     *   ⑦ 构建（DEX 替换 + 对齐 + 签名）
+     *   ⑧ 诊断产物（能否进）
+     *
+     * 任何一步失败 → 明确报错 + 停在原地（不静默继续）
+     */
+    private fun runOneClickUnpack() {
         lifecycleScope.launch {
             val tasks = withContext(Dispatchers.IO) {
                 try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
             }
-            val finished = tasks.filter { it.isTerminal }
-            if (finished.isEmpty()) {
-                Toast.makeText(this@MainActivity, "暂无已处理任务可诊断", Toast.LENGTH_SHORT).show()
+            if (tasks.isEmpty()) {
+                Toast.makeText(this@MainActivity, "请先「选APK」创建任务", Toast.LENGTH_LONG).show()
                 return@launch
             }
-            val names = finished.map { it.displayName }.toTypedArray()
+            val names = tasks.map { "${it.displayName}  [${it.stateLabel}]" }.toTypedArray()
             AlertDialog.Builder(this@MainActivity)
-                .setTitle("选择要诊断的任务")
+                .setTitle("一键脱修 · 选择任务")
                 .setItems(names) { _, which ->
-                    val t = finished[which]
-                    diagnoseTask(t)
+                    oneClickRun(tasks[which])
                 }
                 .setNegativeButton("取消", null)
                 .show()
+        }
+    }
+
+    private fun oneClickRun(task: TaskMetaView) {
+        val pkg = task.lookupPackage
+        if (pkg.isNullOrBlank()) {
+            showResultDialog("一键脱修", "❌ 该任务没有包名（需从「已安装应用」选择）")
+            return
+        }
+
+        lifecycleScope.launch {
+            val ws = "/sdcard/MT2/apks"
+            val tid = task.taskId
+            val taskDir = File("$ws/unpackcloud/tasks/$tid")
+            val log = StringBuilder("== 一键脱修 · $tid ==\n\n")
+            var stage = ""
+
+            fun fail(msg: String) {
+                log.append("\n❌ [$stage] $msg\n")
+                showResultDialog("一键脱修 · 失败", log.toString())
+            }
+
+            try {
+                // ---------- ① 壳诊断 ----------
+                stage = "1/7 壳诊断"
+                log.append("[$stage] …\n")
+                val srcApk = File(task.sourceApk)
+                if (!srcApk.exists()) { fail("原 APK 不存在: ${task.sourceApk}"); return@launch }
+                val v = com.yuntuoxiu.app.worker.ShellDetect.detect(srcApk.absolutePath)
+                val shellTag = v.tag
+                log.append("  壳类型: $shellTag (${(v.confidence * 100).toInt()}%)\n")
+                log.append("  DEX: ${v.dexCount} 个\n")
+
+                val isRealShell = !shellTag.equals("NONE", true) &&
+                        !shellTag.equals("CLEAN", true) && v.confidence > 0.5
+
+                // ---------- ② 壳清理 ----------
+                stage = "2/7 壳清理"
+                var workApk = task.sourceApk
+                if (isRealShell) {
+                    log.append("[$stage] …\n")
+                    val cleaned = File(taskDir, "cleaned.apk")
+                    cleaned.parentFile?.mkdirs()
+                    val n = withContext(Dispatchers.IO) {
+                        com.yuntuoxiu.app.worker.ShellDetect.cleanShellSo(
+                            task.sourceApk, cleaned.absolutePath)
+                    }
+                    if (n > 0 && cleaned.exists()) {
+                        workApk = cleaned.absolutePath
+                        log.append("  已删壳条目 $n 个\n")
+                    } else {
+                        log.append("  无壳特征可删（跳过）\n")
+                    }
+                } else {
+                    log.append("[$stage] 跳过（非加固）\n")
+                }
+
+                // ---------- ③ CLI 注入（NPatch + 模块） ----------
+                stage = "3/7 注入脱壳模块"
+                log.append("[$stage] …（可能 1-3 分钟）\n")
+                val injected = File(taskDir, "injected.apk")
+                val injectCmd = "bash $ws/ytx_npatch_inject.sh " +
+                        "'$workApk' '${injected.absolutePath}' '$pkg' " +
+                        "--modules '$ws/ytx-tools/ytxdump-module.apk' 2>&1 | tail -8"
+                val injOut = withContext(Dispatchers.IO) {
+                    ShizukuShellExecutor.execWithTimeout(injectCmd, 600_000)
+                        .getString("stdout") ?: ""
+                }
+                if (!injected.exists() || injected.length() < 1024) {
+                    fail("注入失败\n$injOut"); return@launch
+                }
+                log.append("  ✅ 注入产物 ${injected.length() / 1024}KB\n")
+
+                // ---------- ④ 安装 + 启动 ----------
+                stage = "4/7 安装 + 启动"
+                log.append("[$stage] …\n")
+                withContext(Dispatchers.IO) {
+                    ShizukuShellExecutor.exec(
+                        "cp -f '${injected.absolutePath}' /data/local/tmp/ytx_oc.apk && " +
+                        "pm install -r -d /data/local/tmp/ytx_oc.apk 2>&1 | tail -1")
+                }
+                withContext(Dispatchers.IO) {
+                    ShizukuShellExecutor.exec(
+                        "am force-stop $pkg; " +
+                        "monkey -p $pkg -c android.intent.category.LAUNCHER 1")
+                }
+                log.append("  已安装并启动\n")
+
+                // ---------- ⑤ 等 dump ----------
+                stage = "5/7 等待 dump"
+                log.append("[$stage] …（最多 30s）\n")
+                val modDump = "/sdcard/Android/data/$pkg/files/ytx_dump"
+                var dexN = 0
+                for (i in 1..10) {
+                    delay(3000)
+                    dexN = withContext(Dispatchers.IO) {
+                        val r = ShizukuShellExecutor.exec(
+                            "ls $modDump/dex_*.dex 2>/dev/null | wc -l")
+                        (r.getString("stdout") ?: "0").trim().toIntOrNull() ?: 0
+                    }
+                    if (dexN > 0) break
+                }
+                if (dexN <= 0) {
+                    fail("30s 内未产出 DEX。可能：\n" +
+                        "· 目标无壳（不需要脱壳）→ 直接用原 APK\n" +
+                        "· 壳对抗（需 smali 替换）→ 去工具里试\n" +
+                        "· 模块未加载（检查日志）")
+                    return@launch
+                }
+                log.append("  ✅ 产出 $dexN 个 dex\n")
+
+                // ---------- ⑥ 收集 ----------
+                stage = "6/7 收集 DEX"
+                log.append("[$stage] …\n")
+                val dumpDir = File(taskDir, "dump")
+                dumpDir.mkdirs()
+                withContext(Dispatchers.IO) {
+                    ShizukuShellExecutor.exec(
+                        "cp -f $modDump/dex_*.dex '${dumpDir.absolutePath}/' 2>/dev/null; " +
+                        "ls '${dumpDir.absolutePath}'/dex_*.dex | wc -l")
+                }
+                log.append("  已收集到 ${dumpDir.absolutePath}\n")
+
+                // ---------- ⑦ 构建 ----------
+                stage = "7/7 构建（替换+对齐+签名）"
+                log.append("[$stage] …\n")
+                val outApk = File("$ws/云脱修-$tid-oc.apk")
+                val buildCmd = "bash $ws/ytx_build_from_dump.sh " +
+                        "'${task.sourceApk}' '${dumpDir.absolutePath}' '${outApk.absolutePath}' 2>&1 | tail -6"
+                val bOut = withContext(Dispatchers.IO) {
+                    ShizukuShellExecutor.execWithTimeout(buildCmd, 900_000)
+                        .getString("stdout") ?: ""
+                }
+                if (!outApk.exists() || outApk.length() < 1024) {
+                    fail("构建失败\n$bOut"); return@launch
+                }
+                log.append("  ✅ 产物: ${outApk.absolutePath}\n")
+                log.append("  （${outApk.length() / 1024}KB）\n")
+
+                log.append("\n🎉 一键脱修完成！\n")
+                log.append("下一步：安装验证 → bash ytx_diag_launch.sh\n")
+                log.append("若闪退 → 工具里用「smali 替换」修壳桩\n")
+                showResultDialog("一键脱修 · 成功", log.toString())
+                refreshTasks()
+
+            } catch (t: Throwable) {
+                fail("异常: ${t.message}")
+            }
         }
     }
 
@@ -433,7 +593,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 工具面板（v1.6：真功能，不是弹窗说明） */
+    /** 工具面板（v1.6.2：真功能，不是弹窗说明） */
     private fun showToolsPanel() {
         showMenuDialog(
             "工具",
@@ -442,6 +602,7 @@ class MainActivity : AppCompatActivity() {
                 Triple("🧹", "去壳清理", "删壳 so/assets（本地）"),
                 Triple("📤", "收集 Dump", "Shizuku 读取 Xposed 模块产物"),
                 Triple("☁️", "云端构建", "上传 DEX → GitHub Actions"),
+                Triple("🩹", "smali 替换", "修壳桩/native桩（闪退时用）"),
                 Triple("📋", "环境自检", "检查 Shizuku/token/脚本"),
                 Triple("ℹ️", "工具用法说明", "各功能说明")
             )
@@ -451,8 +612,9 @@ class MainActivity : AppCompatActivity() {
                 1 -> toolUnpackClean()
                 2 -> toolCollectDump()
                 3 -> toolCloudBuild()
-                4 -> toolEnvCheck()
-                5 -> showToolsHelp()
+                4 -> toolSmaliPatch()
+                5 -> toolEnvCheck()
+                6 -> showToolsHelp()
             }
         }
     }
@@ -632,7 +794,74 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 工具 5：环境自检 */
+    /** 工具 5：smali 替换（修壳桩，闪退时用） */
+    private fun toolSmaliPatch() {
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
+            }
+            if (tasks.isEmpty()) {
+                Toast.makeText(this@MainActivity, "暂无任务", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = tasks.map { it.displayName }.toTypedArray()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("smali 替换 · 选择任务")
+                .setItems(names) { _, which ->
+                    val t = tasks[which]
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("smali 替换模式")
+                        .setItems(arrayOf(
+                            "① 仅识别（预览，不改）",
+                            "② 识别并替换（改解包目录）"
+                        )) { _, mode ->
+                            smaliPatchRun(t, mode == 0)
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+    }
+
+    private fun smaliPatchRun(task: TaskMetaView, dryRun: Boolean) {
+        lifecycleScope.launch {
+            Toast.makeText(this@MainActivity,
+                if (dryRun) "识别中…" else "替换中…", Toast.LENGTH_SHORT).show()
+
+            val out = withContext(Dispatchers.IO) {
+                try {
+                    val ws = "/sdcard/MT2/apks"
+                    val tid = task.taskId
+                    val dec = "$ws/unpackcloud/tasks/$tid/work/apktool_dec"
+
+                    // ① 若还没解包，先解包
+                    if (!File(dec).exists()) {
+                        val script = """
+                            cd /tmp && java -jar $ws/ytx-tools/apktool.jar d \
+                            '${task.sourceApk}' -o '$dec' -f >/dev/null 2>&1
+                        """.trimIndent()
+                        ShizukuShellExecutor.execWithTimeout(script, 300_000)
+                    }
+                    if (!File(dec).exists()) {
+                        return@withContext "❌ 解包失败（apktool 不可用？）"
+                    }
+
+                    // ② 调 ytx-smali-patch.py
+                    val dryFlag = if (dryRun) "--dry-run" else ""
+                    val cmd = "python3 $ws/ytx-smali-patch.py '$dec' $dryFlag 2>&1 | tail -25"
+                    ShizukuShellExecutor.execWithTimeout(cmd, 300_000)
+                        .getString("stdout") ?: "（无输出）"
+                } catch (t: Throwable) {
+                    "❌ 失败: ${t.message}"
+                }
+            }
+            showResultDialog(if (dryRun) "smali 识别" else "smali 替换", out)
+        }
+    }
+
+    /** 工具 6：环境自检 */
     private fun toolEnvCheck() {
         lifecycleScope.launch {
             val rep = withContext(Dispatchers.IO) {

@@ -231,7 +231,7 @@
             android:insetLeft="0dp"
             android:insetRight="0dp"
             android:textSize="11sp"
-            android:text="诊断" />
+            android:text="一键脱修" />
 
         <Button
             android:id="@+id/btnOpenTools"
