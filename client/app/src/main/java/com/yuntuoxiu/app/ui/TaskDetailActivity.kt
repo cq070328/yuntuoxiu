@@ -105,7 +105,9 @@ class TaskDetailActivity : AppCompatActivity() {
         t.degradeTrace.forEachIndexed { i, d ->
             sb.append("【降级 #${i + 1}】${d["from"]}->${d["fallback"]} 原因:${d["cause"]} ok=${d["ok"]}\n")
         }
-        return sb.ifEmpty { "（暂无修复轨迹）" }
+        // StringBuilder 无 ifEmpty（返回类型不符），用 toString 后判空
+        val out = sb.toString()
+        return if (out.isEmpty()) "（暂无修复轨迹）" else out
     }
 
     companion object {
