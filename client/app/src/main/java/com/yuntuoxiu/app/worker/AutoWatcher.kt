@@ -17,7 +17,7 @@ import java.security.MessageDigest
  *   用 Kotlin 在 APP 内实现，做到「提交后秒级创建任务」。
  *
  * 职责（与后端 watcher 对齐）：
- *   1. 扫描 uploads/*.req.json（客户端提交的创建请求）
+ *   1. 扫描 uploads 目录下的 req 文件（客户端提交的创建请求）
  *   2. 在 tasks/<tid>/ 下创建隔离目录 + meta/task_meta.json
  *   3. 下发 PRE_CHECK 指令到 work/actions/0001_PRE_CHECK.req.json
  *   4. 把请求文件移到 uploads/done/
