@@ -46,15 +46,17 @@ object AutoWatcher {
         var created = 0
         try {
             if (!uploadsRoot.exists()) uploadsRoot.mkdirs()
-            val reqs = uploadsRoot.listFiles { f ->
-                f.isFile && f.name.startsWith("create_") && f.name.endsWith(".req.json")
-            } ?: emptyArray()
+            // 用 list() 避免 listFiles() 重载歧义
+            val allNames = uploadsRoot.list() ?: emptyArray()
+            val reqNames = allNames.filter {
+                it.startsWith("create_") && it.endsWith(".req.json")
+            }
 
-            for (reqFile in reqs) {
+            for (reqName in reqNames) {
                 try {
-                    if (handleCreate(reqFile)) created++
+                    if (handleCreate(File(uploadsRoot, reqName))) created++
                 } catch (t: Throwable) {
-                    LogStore.e(TAG, "处理请求失败 ${reqFile.name}: ${t.message}")
+                    LogStore.e(TAG, "处理请求失败 $reqName: ${t.message}")
                 }
             }
         } catch (t: Throwable) {
@@ -214,7 +216,9 @@ object AutoWatcher {
         val apkName = File(apkPath).name
         val terminal = setOf("SUCCESS", "FAILED", "CANCELLED", "PRE_CHECK_FAILED")
         return try {
-            tasksRoot.listFiles()?.any { d ->
+            val dirs = tasksRoot.list() ?: return false
+            dirs.any { dn ->
+                val d = File(tasksRoot, dn)
                 if (!d.isDirectory) return@any false
                 val mf = File(d, "meta/task_meta.json")
                 if (!mf.exists()) return@any false
@@ -259,9 +263,8 @@ object AutoWatcher {
     /** 待处理请求数（供 UI 显示） */
     fun pendingCount(): Int {
         return try {
-            uploadsRoot.listFiles { f ->
-                f.isFile && f.name.startsWith("create_") && f.name.endsWith(".req.json")
-            }?.size ?: 0
+            val names = uploadsRoot.list() ?: return 0
+            names.count { it.startsWith("create_") && it.endsWith(".req.json") }
         } catch (t: Throwable) { 0 }
     }
 }
