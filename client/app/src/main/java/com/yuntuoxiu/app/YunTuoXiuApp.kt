@@ -1,5 +1,4 @@
 package com.yuntuoxiu.app
-
 import android.app.Application
 import com.yuntuoxiu.app.shizuku.ShizukuClient
 
@@ -28,7 +27,24 @@ class YunTuoXiuApp : Application() {
         super.onCreate()
         instance = this
         // 初始化 Shizuku 客户端：注册生命周期监听（断连/权限回收自动上报）
-        ShizukuClient.init(this)
+        try {
+            ShizukuClient.init(this)
+        } catch (t: Throwable) {
+            LogStore.e("YunTuoXiuApp", "ShizukuClient.init 失败: ${t.message}")
+        }
+        // 【新增】App 启动即自动启动 Worker（无需手动点）
+        try {
+            val intent = android.content.Intent(this,
+                com.yuntuoxiu.app.worker.WorkerService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            LogStore.i("YunTuoXiuApp", "已自动启动 Worker")
+        } catch (t: Throwable) {
+            LogStore.e("YunTuoXiuApp", "自动启动 Worker 失败: ${t.message}")
+        }
     }
 
     override fun onTerminate() {
