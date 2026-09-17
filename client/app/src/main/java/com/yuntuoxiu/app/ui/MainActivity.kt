@@ -398,14 +398,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun startAutoRefresh() {
         lifecycleScope.launch {
+            var tick = 0
             while (true) {
                 try {
+                    // 任务列表刷新快（1s），日志刷新慢（3s）
                     refreshTasks()
-                    refreshLog()
+                    if (tick % 3 == 0) refreshLog()
+                    tick++
                 } catch (t: Throwable) {
                     LogStore.e(TAG, "自动刷新异常: ${t.message}")
                 }
-                delay(2000)
+                delay(1000)
             }
         }
     }
@@ -420,9 +423,27 @@ class MainActivity : AppCompatActivity() {
                     emptyList()
                 }
             }
-            adapter.submit(tasks)
-            tvTaskCount.text = "任务列表（${tasks.size}）"
+            // 【提速】去掉本地骨架中「已被后端处理」的重复项
+            val deduped = dedupeLocalSkeleton(tasks)
+            adapter.submit(deduped)
+            tvTaskCount.text = "任务列表（${deduped.size}）"
             refreshing = false
+        }
+    }
+
+    /**
+     * 去重：本地骨架（local_xxx/PENDING_LOCAL）若已有后端正式任务
+     * 处理同一 source_apk，则隐藏骨架。
+     */
+    private fun dedupeLocalSkeleton(tasks: List<TaskMetaView>): List<TaskMetaView> {
+        val backendApks = tasks.filter { !it.localSkeleton }.map { it.sourceApk }.toSet()
+        val out = tasks.filter { t ->
+            if (!t.localSkeleton) return@filter true
+            // 骨架：若后端已有同 APK 任务，隐藏
+            t.sourceApk !in backendApks
+        }
+        return out.sortedByDescending {
+            if (it.updatedAt > 0) it.updatedAt else it.createdAt
         }
     }
 
