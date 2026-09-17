@@ -34,6 +34,7 @@ import com.yuntuoxiu.app.data.TaskGroup
 import com.yuntuoxiu.app.data.TaskMetaView
 import com.yuntuoxiu.app.data.TaskRepository
 import com.yuntuoxiu.app.shizuku.ShizukuClient
+import com.yuntuoxiu.app.worker.TermuxBridge
 import com.yuntuoxiu.app.worker.WorkerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -121,6 +122,36 @@ class MainActivity : AppCompatActivity() {
                 }
                 .setNegativeButton("取消", null)
                 .show()
+        }
+
+        // 【新增】打开 Termux
+        findViewById<View>(R.id.btnOpenTermux)?.setOnClickListener {
+            if (!TermuxBridge.isTermuxInstalled(this)) {
+                AlertDialog.Builder(this)
+                    .setTitle("未安装 Termux")
+                    .setMessage("需要 Termux 才能执行脱壳/修复/打包。\n\n" +
+                            "请安装 Termux_0.119.0-beta.3.apk（在工作区目录）。")
+                    .setPositiveButton("知道了", null)
+                    .show()
+                return@setOnClickListener
+            }
+            TermuxBridge.openTermuxAtWorkspace(this)
+        }
+
+        // 【新增】启动 Termux 守护进程
+        findViewById<View>(R.id.btnStartDaemon)?.setOnClickListener {
+            if (!TermuxBridge.isTermuxInstalled(this)) {
+                Toast.makeText(this, "请先安装 Termux", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            val ok = TermuxBridge.startDaemon(this)
+            if (ok) {
+                Toast.makeText(this,
+                    "已请求 Termux 启动守护进程\n（首次需在 Termux 里跑 termux_setup.sh）",
+                    Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "启动失败（检查 Termux 权限设置）", Toast.LENGTH_LONG).show()
+            }
         }
 
         requestPermissionsIfNeeded()
