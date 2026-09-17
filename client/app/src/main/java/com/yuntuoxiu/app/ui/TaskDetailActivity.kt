@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.yuntuoxiu.app.R
+import com.yuntuoxiu.app.data.SubmitResult
 import com.yuntuoxiu.app.data.TaskMetaView
 import com.yuntuoxiu.app.data.TaskRepository
 import kotlinx.coroutines.Dispatchers
@@ -48,13 +49,13 @@ class TaskDetailActivity : AppCompatActivity() {
 
         btnCancel.setOnClickListener {
             lifecycleScope.launch {
-                withContext(Dispatchers.IO) { TaskRepository.submitCancel(taskId) }
-                    .onSuccess {
+                val r = withContext(Dispatchers.IO) { TaskRepository.submitCancel(taskId) }
+                when (r) {
+                    is SubmitResult.Success ->
                         Toast.makeText(this@TaskDetailActivity, "取消请求已提交", Toast.LENGTH_SHORT).show()
-                    }
-                    .onFailure { e ->
-                        Toast.makeText(this@TaskDetailActivity, "取消失败: ${e.message}", Toast.LENGTH_LONG).show()
-                    }
+                    is SubmitResult.Failure ->
+                        Toast.makeText(this@TaskDetailActivity, "取消失败: ${r.reason}", Toast.LENGTH_LONG).show()
+                }
             }
         }
 
