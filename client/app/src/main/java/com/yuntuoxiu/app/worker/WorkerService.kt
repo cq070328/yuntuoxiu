@@ -96,17 +96,22 @@ class WorkerService : Service() {
             LogStore.i(TAG, "轮询循环开始（间隔 ${POLL_INTERVAL_MS}ms）")
             while (isActive) {
                 try {
+                    // ① 内置 watcher：消费 uploads 请求 → 创建任务（秒级）
+                    val created = AutoWatcher.tick()
+                    if (created > 0) {
+                        LogStore.i(TAG, "AutoWatcher 创建了 $created 个任务")
+                    }
+
+                    // ② 执行活跃任务的 action 指令
                     val tasks = TaskRepository.listTasks()
                     val active = tasks.filter { !it.isTerminal }
 
-                    // 心跳：每 10 次（约 30s）打一次，证明活着
                     heartbeat++
-                    if (heartbeat % 10 == 0) {
-                        LogStore.i(TAG, "心跳 #$heartbeat | 任务总数=${tasks.size} 活跃=${active.size}")
+                    if (heartbeat % 100 == 0) {   // 每 100 次(≈5分钟)一次心跳
+                        LogStore.i(TAG, "心跳 #$heartbeat | 任务=${tasks.size} 活跃=${active.size}")
                     }
 
                     if (active.isNotEmpty()) {
-                        LogStore.i(TAG, "发现 ${active.size} 个活跃任务")
                         for (task in active) processTask(task)
                     }
                 } catch (t: Throwable) {
