@@ -47,16 +47,17 @@ object AutoWatcher {
         try {
             if (!uploadsRoot.exists()) uploadsRoot.mkdirs()
             // 用 list() 避免 listFiles() 重载歧义
-            val allFiles: Array<File>? = uploadsRoot.listFiles()
-            val reqNames = (allFiles ?: emptyArray()).filter {
-                it.isFile && it.name.startsWith("create_") && it.name.endsWith(".req.json")
-            }
-
-            for (reqName in reqNames) {
-                try {
-                    if (handleCreate(File(uploadsRoot, reqName))) created++
-                } catch (t: Throwable) {
-                    LogStore.e(TAG, "处理请求失败 $reqName: ${t.message}")
+            val allFiles = uploadsRoot.listFiles()
+            if (allFiles != null) {
+                for (reqFile in allFiles) {
+                    if (!reqFile.isFile) continue
+                    if (!reqFile.name.startsWith("create_")) continue
+                    if (!reqFile.name.endsWith(".req.json")) continue
+                    try {
+                        if (handleCreate(reqFile)) created++
+                    } catch (t: Throwable) {
+                        LogStore.e(TAG, "处理请求失败 ${reqFile.name}: ${t.message}")
+                    }
                 }
             }
         } catch (t: Throwable) {
@@ -216,13 +217,12 @@ object AutoWatcher {
         val apkName = File(apkPath).name
         val terminal = setOf("SUCCESS", "FAILED", "CANCELLED", "PRE_CHECK_FAILED")
         return try {
-            val dirs: Array<File>? = tasksRoot.listFiles()
+            val dirs = tasksRoot.listFiles()
             if (dirs == null) return false
-            dirs.any { dn ->
-                val d = File(tasksRoot, dn)
-                if (!d.isDirectory) return@any false
+            for (d in dirs) {
+                if (!d.isDirectory) continue
                 val mf = File(d, "meta/task_meta.json")
-                if (!mf.exists()) return@any false
+                if (!mf.exists()) continue
                 try {
                     @Suppress("UNCHECKED_CAST")
                     val m = gson.fromJson(mf.readText(), Map::class.java) as? Map<String, Any?>
@@ -264,9 +264,13 @@ object AutoWatcher {
     /** 待处理请求数（供 UI 显示） */
     fun pendingCount(): Int {
         return try {
-            val files: Array<File>? = uploadsRoot.listFiles()
+            val files = uploadsRoot.listFiles()
             if (files == null) return 0
-            files.count { it.isFile && it.name.startsWith("create_") && it.name.endsWith(".req.json") }
+            var n = 0
+            for (f in files) {
+                if (f.isFile && f.name.startsWith("create_") && f.name.endsWith(".req.json")) n++
+            }
+            n
         } catch (t: Throwable) { 0 }
     }
 }
