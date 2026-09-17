@@ -50,7 +50,7 @@ object ActionType {
 enum class TaskGroup {
     PROCESSING,   // 处理中
     SUCCESS,      // 处理成功
-    FAILED,       // 处理失败
+    FAILED        // 处理失败
 }
 
 /**
