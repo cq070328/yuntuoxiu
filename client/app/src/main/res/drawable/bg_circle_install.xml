@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 圆形安装按钮背景（带按压反馈） -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="#2EA043" />
+            <stroke android:width="2dp" android:color="#3FB950" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#238636" />
+            <stroke android:width="2dp" android:color="#3FB950" />
+        </shape>
+    </item>
+</selector>

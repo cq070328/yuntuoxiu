@@ -1,85 +1,223 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 任务详情（v1.6.4：圆角卡片 + 产物路径 + 一键安装） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:background="#0D1117"
+    android:padding="12dp">
 
-    <TextView
-        android:id="@+id/tvState"
+    <!-- ⭐ 产物卡片（仅终态显示） -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/cardOutput"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:text="状态加载中..." />
+        android:layout_marginBottom="10dp"
+        app:cardBackgroundColor="#0F2419"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="0dp"
+        app:strokeColor="#238636"
+        app:strokeWidth="1dp"
+        android:visibility="gone">
 
-    <TextView
-        android:id="@+id/tvShell"
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="12dp">
+
+            <!-- 圆形安装按钮（点击 = 本地安装） -->
+            <LinearLayout
+                android:id="@+id/btnInstall"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@drawable/bg_circle_install"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⬇"
+                    android:textSize="20sp"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
+            <!-- 路径 + 说明 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="安装包已生成"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="#3FB950" />
+
+                <TextView
+                    android:id="@+id/tvOutputPath"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:textColor="#8B949E"
+                    android:maxLines="3"
+                    android:ellipsize="middle"
+                    android:textIsSelectable="true"
+                    android:text="（路径）" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:text="长按路径可复制 · 点左侧图标安装"
+                    android:textSize="9sp"
+                    android:textColor="#6E7681" />
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- 状态卡片 -->
+    <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textSize="14sp"
-        android:paddingTop="4dp" />
+        android:layout_marginBottom="10dp"
+        app:cardBackgroundColor="#161B22"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="0dp"
+        app:strokeColor="#21262D"
+        app:strokeWidth="1dp">
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:id="@+id/tvState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#E6EDF3"
+                android:text="状态加载中…" />
+
+            <TextView
+                android:id="@+id/tvShell"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                android:textColor="#8B949E"
+                android:paddingTop="4dp" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- 修复轨迹 -->
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="修复轨迹"
-        android:textSize="14sp"
+        android:textSize="13sp"
         android:textStyle="bold"
-        android:paddingTop="12dp" />
+        android:textColor="#58A6FF"
+        android:paddingBottom="4dp" />
 
-    <ScrollView
+    <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1">
-        <TextView
-            android:id="@+id/tvTrace"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textSize="12sp"
-            android:fontFamily="monospace" />
-    </ScrollView>
+        android:layout_weight="1"
+        android:layout_marginBottom="8dp"
+        app:cardBackgroundColor="#0A0C10"
+        app:cardCornerRadius="10dp"
+        app:cardElevation="0dp"
+        app:strokeColor="#21262D"
+        app:strokeWidth="1dp">
 
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="8dp">
+            <TextView
+                android:id="@+id/tvTrace"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:textColor="#8B949E"
+                android:textIsSelectable="true" />
+        </ScrollView>
+    </androidx.cardview.widget.CardView>
+
+    <!-- 日志 -->
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="日志（尾部）"
-        android:textSize="14sp"
+        android:textSize="13sp"
         android:textStyle="bold"
-        android:paddingTop="8dp" />
+        android:textColor="#58A6FF"
+        android:paddingBottom="4dp" />
 
-    <ScrollView
+    <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1">
-        <TextView
-            android:id="@+id/tvLog"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textSize="11sp"
-            android:fontFamily="monospace" />
-    </ScrollView>
+        android:layout_weight="1"
+        android:layout_marginBottom="8dp"
+        app:cardBackgroundColor="#0A0C10"
+        app:cardCornerRadius="10dp"
+        app:cardElevation="0dp"
+        app:strokeColor="#21262D"
+        app:strokeWidth="1dp">
 
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="8dp">
+            <TextView
+                android:id="@+id/tvLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:textColor="#8B949E"
+                android:textIsSelectable="true" />
+        </ScrollView>
+    </androidx.cardview.widget.CardView>
+
+    <!-- 操作按钮 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingTop="8dp">
+        android:orientation="horizontal">
 
         <Button
             android:id="@+id/btnRefresh"
+            style="@style/YtxButton.Small"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="44dp"
             android:layout_weight="1"
             android:text="刷新" />
 
         <Button
             android:id="@+id/btnCancel"
+            style="@style/YtxButton.Small"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="44dp"
             android:layout_weight="1"
+            android:layout_marginStart="8dp"
             android:text="取消任务"
-            android:backgroundTint="#D32F2F" />
+            app:backgroundTint="#D32F2F" />
     </LinearLayout>
 
 </LinearLayout>

@@ -130,16 +130,11 @@ class MainActivity : AppCompatActivity() {
 
         // 【新增】清除日志按钮
         findViewById<View>(R.id.btnClearLog).setOnClickListener {
-            AlertDialog.Builder(this)
-                .setTitle("清除日志")
-                .setMessage("确认清除全部运行日志？")
-                .setPositiveButton("清除") { _, _ ->
-                    LogStore.clear()
-                    refreshLog()
-                    Toast.makeText(this, "日志已清除", Toast.LENGTH_SHORT).show()
-                }
-                .setNegativeButton("取消", null)
-                .show()
+            showConfirmDialog("清除日志", "确认清除全部运行日志？", "清除", danger = true) {
+                LogStore.clear()
+                refreshLog()
+                Toast.makeText(this, "日志已清除", Toast.LENGTH_SHORT).show()
+            }
         }
 
         // 【v1.6】选择构建后端（云端 / 容器 / Termux / 自动）
@@ -317,28 +312,23 @@ class MainActivity : AppCompatActivity() {
     private fun chooseBuildBackend() {
         lifecycleScope.launch {
             val cur = withContext(Dispatchers.IO) { readBackendPref() }
-            val labels = arrayOf(
+            val labels = listOf(
                 "自动（推荐：云端 > 容器 > Termux）",
                 "云端构建（GitHub Actions）",
                 "容器构建（Operit Ubuntu）",
                 "Termux 构建"
             )
-            val vals = arrayOf("auto", "cloud", "container", "termux")
+            val vals = listOf("auto", "cloud", "container", "termux")
             val checked = vals.indexOf(cur).coerceAtLeast(0)
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("选择构建后端（当前：$cur）")
-                .setSingleChoiceItems(labels, checked) { d, which ->
-                    val v = vals[which]
-                    lifecycleScope.launch {
-                        withContext(Dispatchers.IO) { writeBackendPref(v) }
-                        d.dismiss()
-                        Toast.makeText(this@MainActivity,
-                            "已设置：$v", Toast.LENGTH_SHORT).show()
-                        refreshBackendStatus()
-                    }
+            showSingleChoiceDialog("选择构建后端（当前：$cur）", labels, checked) { which ->
+                val v = vals[which]
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { writeBackendPref(v) }
+                    Toast.makeText(this@MainActivity,
+                        "已设置：$v", Toast.LENGTH_SHORT).show()
+                    refreshBackendStatus()
                 }
-                .setNegativeButton("取消", null)
-                .show()
+            }
         }
     }
 
@@ -418,13 +408,12 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
             val names = tasks.map { "${it.displayName}  [${it.stateLabel}]" }.toTypedArray()
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("一键脱修 · 选择任务")
-                .setItems(names) { _, which ->
-                    oneClickRun(tasks[which])
-                }
-                .setNegativeButton("取消", null)
-                .show()
+            showItemsDialog(
+            "一键脱修 · 选择任务",
+            names.map { Triple("", it, "") }
+        ) { which ->
+            oneClickRun(tasks[which])
+        }
         }
     }
 
@@ -651,37 +640,36 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
             val names = tasks.map { it.displayName }.toTypedArray()
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("选择要诊断的 APK")
-                .setItems(names) { _, which ->
-                    val t = tasks[which]
-                    lifecycleScope.launch {
-                        Toast.makeText(this@MainActivity, "诊断中…", Toast.LENGTH_SHORT).show()
-                        val rep = withContext(Dispatchers.IO) {
-                            try {
-                                val apk = File(t.sourceApk)
-                                if (!apk.exists()) {
-                                    "❌ 原 APK 不存在: ${t.sourceApk}"
-                                } else {
-                                    val v = com.yuntuoxiu.app.worker.ShellDetect.detect(apk.absolutePath)
-                                    buildString {
-                                        append("标签: ${v.tag}\n")
-                                        append("置信度: ${(v.confidence * 100).toInt()}%\n")
-                                        append("DEX 数: ${v.dexCount}\n")
-                                        append("全部命中: ${v.tagsAll.joinToString(", ")}\n\n")
-                                        append("依据:\n")
-                                        v.reasons.take(10).forEach { append("  · $it\n") }
-                                    }
-                                }
-                            } catch (e: Throwable) {
-                                "诊断失败: ${e.message}"
-                            }
-                        }
-                        showResultDialog("壳诊断结果", rep)
-                    }
-                }
-                .setNegativeButton("取消", null)
-                .show()
+            showItemsDialog(
+            "选择要诊断的 APK",
+            names.map { Triple("", it, "") }
+        ) { which ->
+            val t = tasks[which]
+            lifecycleScope.launch {
+            Toast.makeText(this@MainActivity, "诊断中…", Toast.LENGTH_SHORT).show()
+            val rep = withContext(Dispatchers.IO) {
+            try {
+            val apk = File(t.sourceApk)
+            if (!apk.exists()) {
+            "❌ 原 APK 不存在: ${t.sourceApk}"
+            } else {
+            val v = com.yuntuoxiu.app.worker.ShellDetect.detect(apk.absolutePath)
+            buildString {
+            append("标签: ${v.tag}\n")
+            append("置信度: ${(v.confidence * 100).toInt()}%\n")
+            append("DEX 数: ${v.dexCount}\n")
+            append("全部命中: ${v.tagsAll.joinToString(", ")}\n\n")
+            append("依据:\n")
+            v.reasons.take(10).forEach { append("  · $it\n") }
+            }
+            }
+            } catch (e: Throwable) {
+            "诊断失败: ${e.message}"
+            }
+            }
+            showResultDialog("壳诊断结果", rep)
+            }
+        }
         }
     }
 
@@ -696,31 +684,30 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
             val names = tasks.map { it.displayName }.toTypedArray()
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("选择要去壳的 APK")
-                .setItems(names) { _, which ->
-                    val t = tasks[which]
-                    lifecycleScope.launch {
-                        Toast.makeText(this@MainActivity, "清理中…", Toast.LENGTH_LONG).show()
-                        val (out, ok) = withContext(Dispatchers.IO) {
-                            try {
-                                val src = File(t.sourceApk)
-                                if (!src.exists()) return@withContext ("❌ 原 APK 不存在" to false)
-                                val dst = File(YunTuoXiuApp.CLOUD_ROOT,
-                                    "tasks/${t.taskId}/cleaned.apk")
-                                dst.parentFile?.mkdirs()
-                                val n = com.yuntuoxiu.app.worker.ShellDetect.cleanShellSo(
-                                    src.absolutePath, dst.absolutePath)
-                                ("✅ 已清理 $n 个壳条目 ->\n${dst.absolutePath}" to true)
-                            } catch (e: Throwable) {
-                                ("清理失败: ${e.message}" to false)
-                            }
-                        }
-                        showResultDialog("去壳清理", out)
-                    }
-                }
-                .setNegativeButton("取消", null)
-                .show()
+            showItemsDialog(
+            "选择要去壳的 APK",
+            names.map { Triple("", it, "") }
+        ) { which ->
+            val t = tasks[which]
+            lifecycleScope.launch {
+            Toast.makeText(this@MainActivity, "清理中…", Toast.LENGTH_LONG).show()
+            val (out, ok) = withContext(Dispatchers.IO) {
+            try {
+            val src = File(t.sourceApk)
+            if (!src.exists()) return@withContext ("❌ 原 APK 不存在" to false)
+            val dst = File(YunTuoXiuApp.CLOUD_ROOT,
+            "tasks/${t.taskId}/cleaned.apk")
+            dst.parentFile?.mkdirs()
+            val n = com.yuntuoxiu.app.worker.ShellDetect.cleanShellSo(
+            src.absolutePath, dst.absolutePath)
+            ("✅ 已清理 $n 个壳条目 ->\n${dst.absolutePath}" to true)
+            } catch (e: Throwable) {
+            ("清理失败: ${e.message}" to false)
+            }
+            }
+            showResultDialog("去壳清理", out)
+            }
+        }
         }
     }
 
@@ -736,38 +723,37 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
             val names = cands.map { it.displayName }.toTypedArray()
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("选择要收集 Dump 的任务")
-                .setItems(names) { _, which ->
-                    val t = cands[which]
-                    val pkg = t.lookupPackage!!
-                    lifecycleScope.launch {
-                        Toast.makeText(this@MainActivity, "收集中…", Toast.LENGTH_SHORT).show()
-                        val out = withContext(Dispatchers.IO) {
-                            try {
-                                val dest = File(YunTuoXiuApp.CLOUD_ROOT,
-                                    "tasks/${t.taskId}/dump")
-                                dest.mkdirs()
-                                val cmd = "mkdir -p '${dest.absolutePath}' && " +
-                                    "if [ -d '/sdcard/Android/data/$pkg/files/ytx_dump' ]; then " +
-                                    "cp -f '/sdcard/Android/data/$pkg/files/ytx_dump'/dex_*.dex " +
-                                    "'${dest.absolutePath}/' 2>/dev/null; " +
-                                    "ls '${dest.absolutePath}'/dex_*.dex 2>/dev/null | wc -l; " +
-                                    "else echo NOT_FOUND; fi"
-                                val r = ShizukuShellExecutor.exec(cmd)
-                                val o = (r.getString("stdout") ?: "").trim()
-                                if (o == "NOT_FOUND")
-                                    "❌ 未找到模块 dump 目录（先让模块跑一次）"
-                                else "✅ 收集 $o 个 dex -> ${dest.absolutePath}"
-                            } catch (e: Throwable) {
-                                "收集失败: ${e.message}"
-                            }
-                        }
-                        showResultDialog("收集 Dump", out)
-                    }
-                }
-                .setNegativeButton("取消", null)
-                .show()
+            showItemsDialog(
+            "选择要收集 Dump 的任务",
+            names.map { Triple("", it, "") }
+        ) { which ->
+            val t = cands[which]
+            val pkg = t.lookupPackage!!
+            lifecycleScope.launch {
+            Toast.makeText(this@MainActivity, "收集中…", Toast.LENGTH_SHORT).show()
+            val out = withContext(Dispatchers.IO) {
+            try {
+            val dest = File(YunTuoXiuApp.CLOUD_ROOT,
+            "tasks/${t.taskId}/dump")
+            dest.mkdirs()
+            val cmd = "mkdir -p '${dest.absolutePath}' && " +
+            "if [ -d '/sdcard/Android/data/$pkg/files/ytx_dump' ]; then " +
+            "cp -f '/sdcard/Android/data/$pkg/files/ytx_dump'/dex_*.dex " +
+            "'${dest.absolutePath}/' 2>/dev/null; " +
+            "ls '${dest.absolutePath}'/dex_*.dex 2>/dev/null | wc -l; " +
+            "else echo NOT_FOUND; fi"
+            val r = ShizukuShellExecutor.exec(cmd)
+            val o = (r.getString("stdout") ?: "").trim()
+            if (o == "NOT_FOUND")
+            "❌ 未找到模块 dump 目录（先让模块跑一次）"
+            else "✅ 收集 $o 个 dex -> ${dest.absolutePath}"
+            } catch (e: Throwable) {
+            "收集失败: ${e.message}"
+            }
+            }
+            showResultDialog("收集 Dump", out)
+            }
+        }
         }
     }
 
@@ -783,35 +769,34 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
             val names = cands.map { it.displayName }.toTypedArray()
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("选择要云端构建的任务")
-                .setItems(names) { _, which ->
-                    val t = cands[which]
-                    val dumpDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}/dump")
-                    if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
-                        Toast.makeText(this@MainActivity,
-                            "该任务无 dump（先用「收集 Dump」）", Toast.LENGTH_LONG).show()
-                        return@setItems
-                    }
-                    lifecycleScope.launch {
-                        Toast.makeText(this@MainActivity,
-                            "云端构建中（可能几分钟）…", Toast.LENGTH_LONG).show()
-                        val out = withContext(Dispatchers.IO) {
-                            try {
-                                val sh = "/sdcard/MT2/apks/ytx-cloud-build.py"
-                                val cmd = "python3 $sh --task '${t.taskId}' " +
-                                    "--apk '${t.sourceApk}' --dump '${dumpDir.absolutePath}' 2>&1 | tail -15"
-                                val r = ShizukuShellExecutor.execWithTimeout(cmd, 1800_000)
-                                (r.getString("stdout") ?: "（无输出）")
-                            } catch (e: Throwable) {
-                                "云端构建失败: ${e.message}"
-                            }
-                        }
-                        showResultDialog("云端构建结果", out)
-                    }
-                }
-                .setNegativeButton("取消", null)
-                .show()
+            showItemsDialog(
+            "选择要云端构建的任务",
+            names.map { Triple("", it, "") }
+        ) { which ->
+            val t = cands[which]
+            val dumpDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}/dump")
+            if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
+            Toast.makeText(this@MainActivity,
+            "该任务无 dump（先用「收集 Dump」）", Toast.LENGTH_LONG).show()
+            return@setItems
+            }
+            lifecycleScope.launch {
+            Toast.makeText(this@MainActivity,
+            "云端构建中（可能几分钟）…", Toast.LENGTH_LONG).show()
+            val out = withContext(Dispatchers.IO) {
+            try {
+            val sh = "/sdcard/MT2/apks/ytx-cloud-build.py"
+            val cmd = "python3 $sh --task '${t.taskId}' " +
+            "--apk '${t.sourceApk}' --dump '${dumpDir.absolutePath}' 2>&1 | tail -15"
+            val r = ShizukuShellExecutor.execWithTimeout(cmd, 1800_000)
+            (r.getString("stdout") ?: "（无输出）")
+            } catch (e: Throwable) {
+            "云端构建失败: ${e.message}"
+            }
+            }
+            showResultDialog("云端构建结果", out)
+            }
+        }
         }
     }
 
@@ -826,23 +811,21 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
             val names = tasks.map { it.displayName }.toTypedArray()
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("smali 替换 · 选择任务")
-                .setItems(names) { _, which ->
-                    val t = tasks[which]
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("smali 替换模式")
-                        .setItems(arrayOf(
-                            "① 仅识别（预览，不改）",
-                            "② 识别并替换（改解包目录）"
-                        )) { _, mode ->
-                            smaliPatchRun(t, mode == 0)
-                        }
-                        .setNegativeButton("取消", null)
-                        .show()
+            showItemsDialog(
+                "smali 替换 · 选择任务",
+                names.map { Triple("", it, "") }
+            ) { which ->
+                val t = tasks[which]
+                showItemsDialog(
+                    "smali 替换模式",
+                    listOf(
+                        Triple("🔍", "仅识别（预览，不改）", "扫描壳特征但不动文件"),
+                        Triple("🩹", "识别并替换", "有则替换，无则跳过")
+                    )
+                ) { mode ->
+                    smaliPatchRun(t, mode == 0)
                 }
-                .setNegativeButton("取消", null)
-                .show()
+            }
         }
     }
 
@@ -927,25 +910,28 @@ class MainActivity : AppCompatActivity() {
                 "详见工作区「架构说明.md」")
     }
 
-    /** 长按任务：左「取消」右「删除」 */
+    /** 长按任务：查看信息 + 删除 */
     private fun showTaskMenu(task: TaskMetaView) {
-        AlertDialog.Builder(this)
+        val dlg = AlertDialog.Builder(this, R.style.YtxDialog)
             .setTitle("任务：${task.displayName}")
             .setMessage("状态：${task.stateLabel}\n壳：${task.shellLabel}\n${task.taskId}")
-            .setNegativeButton("取消") { d, _ -> d.dismiss() }
+            .setNegativeButton("关闭") { d, _ -> d.dismiss() }
             .setPositiveButton("删除") { _, _ -> confirmDeleteTask(task) }
-            .show()
+            .create()
+        dlg.show()
+        styleDialogWindow(dlg)
+        dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+            ?.setTextColor(0xFFF85149.toInt())
     }
 
     /** 删除任务确认 */
     private fun confirmDeleteTask(task: TaskMetaView) {
-        AlertDialog.Builder(this)
-            .setTitle("删除任务")
-            .setMessage("确认删除任务「${task.displayName}」？\n\n" +
-                    "将删除该任务的所有文件（原始副本/dump/修复产物/日志）。\n此操作不可恢复。")
-            .setPositiveButton("删除") { _, _ -> doDeleteTask(task) }
-            .setNegativeButton("取消", null)
-            .show()
+        showConfirmDialog("删除任务",
+            "确认删除任务「${task.displayName}」？\n\n" +
+            "将删除该任务的所有文件（原始副本/dump/修复产物/日志）。\n此操作不可恢复。",
+            "删除", danger = true) {
+            doDeleteTask(task)
+        }
     }
 
     private fun doDeleteTask(task: TaskMetaView) {
@@ -1096,18 +1082,18 @@ class MainActivity : AppCompatActivity() {
             override fun afterTextChanged(s: android.text.Editable?) {}
         })
 
-        val dialog = AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this, R.style.YtxDialog)
             .setTitle("选择已安装应用（${allApps.size} 个）")
             .setView(container)
             .setNegativeButton("取消", null)
             .create()
-
         listView.setOnItemClickListener { _, _, pos, _ ->
             val item = shown[pos]
             dialog.dismiss()
             submitInstalledApp(item.label, item.packageName, item.sourceDir)
         }
         dialog.show()
+        styleDialogWindow(dialog)
     }
 
     private fun submitInstalledApp(label: String, pkg: String, srcDir: String) {
@@ -1337,15 +1323,44 @@ class MainActivity : AppCompatActivity() {
             }
             container.addView(row)
         }
-        val dlg = AlertDialog.Builder(this)
+        val dlg = AlertDialog.Builder(this, R.style.YtxDialog)
             .setTitle(title)
             .setView(scroll)
             .setNegativeButton("关闭", null)
             .create()
         dlg.show()
+        styleDialogWindow(dlg)
     }
 
-    /** 美化只读结果弹窗（等宽字体 + 可滚动） */
+    /**
+     * ⭐ v1.6.4 通用「列表选择」弹窗（深色圆角卡片风格，替代 AlertDialog.setItems 灰方框）。
+     *
+     * @param items 每项 = Triple(图标, 标题, 描述)；图标/描述可空串
+     */
+    private fun showItemsDialog(
+        title: String,
+        items: List<Triple<String, String, String>>,
+        onPick: (Int) -> Unit
+    ) {
+        showMenuDialog(title, items, onPick)
+    }
+
+    /**
+     * ⭐ v1.6.4 通用「单选」弹窗（深色圆角卡片，替代 setSingleChoiceItems）。
+     */
+    private fun showSingleChoiceDialog(
+        title: String,
+        items: List<String>,
+        checkedIndex: Int,
+        onPick: (Int) -> Unit
+    ) {
+        val list = items.mapIndexed { i, s ->
+            Triple(if (i == checkedIndex) "✅" else "○", s, "")
+        }
+        showMenuDialog(title, list, onPick)
+    }
+
+    /** 美化只读结果弹窗（等宽字体 + 可滚动 + 深色圆角卡片） */
     private fun showResultDialog(title: String, body: String) {
         val tv = TextView(this).apply {
             text = body
@@ -1361,11 +1376,63 @@ class MainActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 minOf(dp(480), (resources.displayMetrics.heightPixels * 0.65).toInt()))
         }
-        AlertDialog.Builder(this)
+        val dlg = AlertDialog.Builder(this, R.style.YtxDialog)
             .setTitle(title)
             .setView(scroll)
             .setPositiveButton("关闭", null)
-            .show()
+            .create()
+        dlg.show()
+        styleDialogWindow(dlg)
+    }
+
+    /**
+     * ⭐ v1.6.4 通用「确认」弹窗（深色圆角卡片风格，替代 AlertDialog 灰方框）。
+     */
+    private fun showConfirmDialog(
+        title: String,
+        message: String,
+        confirmText: String = "确定",
+        danger: Boolean = false,
+        onConfirm: () -> Unit
+    ) {
+        val dlg = AlertDialog.Builder(this, R.style.YtxDialog)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton(confirmText) { _, _ -> onConfirm() }
+            .setNegativeButton("取消", null)
+            .create()
+        dlg.show()
+        styleDialogWindow(dlg)
+        // 危险操作（删除/取消）用红色按钮
+        if (danger) {
+            dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+                ?.setTextColor(0xFFF85149.toInt())
+        }
+    }
+
+    /**
+     * ⭐ 统一弹窗窗口样式：
+     *   · 深色圆角背景（bg_dialog）
+     *   · 底层轻微虚化（dimAmount 0.55）
+     *   · 阴影层次（elevation）
+     */
+    private fun styleDialogWindow(dlg: AlertDialog) {
+        try {
+            val w = dlg.window ?: return
+            // 深色圆角背景
+            w.setBackgroundDrawableResource(R.drawable.bg_dialog)
+            // 底层虚化（0..1，越大越暗）
+            w.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            val lp = w.attributes
+            lp.dimAmount = 0.60f
+            w.attributes = lp
+            // 阴影层次
+            if (android.os.Build.VERSION.SDK_INT >= 21) {
+                w.setElevation(dp(8).toFloat())
+            }
+        } catch (t: Throwable) {
+            LogStore.w(TAG, "弹窗样式设置失败: ${t.message}")
+        }
     }
 
     companion object {
