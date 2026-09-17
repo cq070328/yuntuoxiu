@@ -1,14 +1,18 @@
 name: Build YunTuoXiu APK
 
+# 只保留手动触发（去掉 push，避免推送文件时重复编译）
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
+
+# 允许取消同一分支的旧运行，避免排队
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
 
     steps:
       - name: 检出代码
@@ -18,14 +22,35 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
+
+      # 缓存 Gradle（关键提速点）
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('client/**/*.gradle*', 'client/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      # 缓存 Android SDK（关键提速点）
+      - name: 缓存 Android SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/android-sdk
+          key: android-sdk-34-v1
 
       - name: 设置 Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: 8.7
+          gradle-version: '8.7'
 
-      - name: 安装 Android cmdline-tools
+      # 仅在缓存未命中时才下载 SDK
+      - name: 下载 Android cmdline-tools
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
         run: |
           SDK_ROOT=$HOME/android-sdk
           mkdir -p $SDK_ROOT/cmdline-tools
@@ -33,26 +58,27 @@ jobs:
           curl -sSL -o cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q cmdtools.zip -d $SDK_ROOT/cmdline-tools/
           mv $SDK_ROOT/cmdline-tools/cmdline-tools $SDK_ROOT/cmdline-tools/latest
-          echo ANDROID_HOME=$SDK_ROOT >> $GITHUB_ENV
-          echo ANDROID_SDK_ROOT=$SDK_ROOT >> $GITHUB_ENV
-          echo $SDK_ROOT/cmdline-tools/latest/bin >> $GITHUB_PATH
 
-      - name: 安装 SDK 组件
+      - name: 配置 SDK 环境
+        run: |
+          SDK_ROOT=$HOME/android-sdk
+          echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+
+      - name: 安装 SDK 组件（仅缓存未命中）
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
         run: |
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager platforms\;android-34 build-tools\;34.0.0 platform-tools
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
       - name: 生成 local.properties
         working-directory: client
-        run: echo sdk.dir=$ANDROID_HOME > local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: 编译 Debug APK
         working-directory: client
         run: gradle assembleDebug --no-daemon --stacktrace
-
-      - name: 列出产物
-        if: always()
-        run: find client/app/build/outputs -name *.apk 2>/dev/null || echo none
 
       - name: 上传 APK
         if: success()
