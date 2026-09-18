@@ -95,29 +95,53 @@ object TaskRepository {
 
             uploadsRoot.mkdirs()
 
-            // 1) 复制（原始文件只读约束）
+            // 1) 复制到 uploads（若源已在 uploads 目录内，跳过）
+            //
+            // ⚠️ v1.7.1 关键修复：
+            //   · APP **无权限写 uploads**（目录 750，属 u0_a0:media_rw）
+            //   · 但「已安装应用」流程里，调用方已用 **Shizuku** 把 APK
+            //     复制到 uploads/installed_<pkg>.apk 了
+            //   · 此时 sourceApk 已在 uploads 内 → **不需要再复制**
+            //     （否则 APP 的 copyTo 会因权限失败：ENOENT/EACCES）
+            val upPath = uploadsRoot.absolutePath
+            val srcPath = try { sourceApk.canonicalPath } catch (_: Throwable) { sourceApk.absolutePath }
             val dest = File(uploadsRoot, sourceApk.name)
-            try {
-                sourceApk.copyTo(dest, overwrite = true)
-            } catch (e: Throwable) {
-                return SubmitResult.Failure("复制到 uploads 失败: ${e.message}")
+
+            if (srcPath.startsWith(upPath)) {
+                // 已在 uploads → 直接用（无需复制）
+                Log.i(TAG, "源已在 uploads，跳过复制: $srcPath")
+            } else {
+                // 不在 → 用 Shizuku 复制（APP 无权限）
+                val cpCmd = "cp -f '$srcPath' '${dest.absolutePath}' 2>&1; " +
+                            "echo \"SZ=\$(stat -c %s '${dest.absolutePath}' 2>/dev/null || echo 0)\""
+                val cpRes = com.yuntuoxiu.app.shizuku.ShizukuShellExecutor.exec(cpCmd)
+                val cpOut = (cpRes.getString("stdout") ?: "").trim()
+                val cpSize = Regex("SZ=(\\d+)").find(cpOut)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+                if (cpSize < 1024) {
+                    return SubmitResult.Failure(
+                        "复制到 uploads 失败（size=$cpSize）\n" +
+                        "源: $srcPath\n目标: ${dest.absolutePath}\n$cpOut")
+                }
             }
+
+            // 后续用 dest（统一）
+            val finalApk = if (srcPath.startsWith(upPath)) sourceApk else dest
 
             // 2) 解析包名（PackageManager，最可靠）
             val pkg = try {
                 context.getPackageManager()
-                    .getPackageArchiveInfo(dest.absolutePath, 0)?.packageName
+                    .getPackageArchiveInfo(finalApk.absolutePath, 0)?.packageName
             } catch (e: Exception) {
                 Log.w(TAG, "解析包名失败: ${e.message}"); null
             }
             val verName = try {
                 context.getPackageManager()
-                    .getPackageArchiveInfo(dest.absolutePath, 0)?.versionName
+                    .getPackageArchiveInfo(finalApk.absolutePath, 0)?.versionName
             } catch (e: Exception) { null }
 
             // 3) 写 create 请求
             val req = TaskCreateRequest(
-                apkPath = dest.absolutePath,
+                apkPath = finalApk.absolutePath,
                 packageName = pkg ?: "",
                 allowAutoDegrade = allowAutoDegrade,
                 createdAt = System.currentTimeMillis()
@@ -160,8 +184,8 @@ object TaskRepository {
                 }
             }
 
-            Log.i(TAG, "已提交: ${dest.absolutePath} (pkg=$pkg, haveTermux=$haveTermux, localCreated=$created)")
-            SubmitResult.Success(dest.absolutePath)
+            Log.i(TAG, "已提交: ${finalApk.absolutePath} (pkg=$pkg, haveTermux=$haveTermux, localCreated=$created)")
+            SubmitResult.Success(finalApk.absolutePath)
         } catch (e: Exception) {
             SubmitResult.Failure(e.message ?: "提交失败")
         }
