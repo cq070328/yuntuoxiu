@@ -52,8 +52,13 @@ object ShellDetect {
         arrayOf("libexec\\.so|libexecmain\\.so", "OVERALL_SHELL", "爱加密 exec", 0.70),
         arrayOf("libijiami.*\\.so", "OVERALL_SHELL", "libijiami*.so", 0.85),
         // 腾讯（乐固 + 御安全）
-        arrayOf("libshell\\.so|libshellx\\.so|libshella.*\\.so|libshellb.*\\.so", "OVERALL_SHELL", "腾讯乐固", 0.85),
-        arrayOf("libshell-super\\.so|libshellsuper\\.so", "OVERALL_SHELL", "腾讯御安全(super)", 0.90),
+        arrayOf("libshell\\.so|libshellx\\.so|libshellb.*\\.so", "OVERALL_SHELL", "腾讯乐固", 0.85),
+        // ⭐ SecShell（腾讯御安全，实测: 爱作业 5.2.5）
+        //   文件名常带包名/版本后缀，正则需容忍任意后缀
+        arrayOf("libshell-super[\\.-][^/]*\\.so", "SECSHELL", "腾讯御安全/SecShell(super)", 0.92),
+        arrayOf("libshellsuper\\.so", "SECSHELL", "SecShell(super)", 0.90),
+        arrayOf("libshella-\\d[^/]*\\.so", "SECSHELL", "SecShell 版本指纹", 0.88),
+        arrayOf("libshell-super\\.so", "SECSHELL", "腾讯御安全(super)", 0.90),
         arrayOf("libtosprotection.*\\.so", "OVERALL_SHELL", "腾讯御安全 tosprotection", 0.85),
         arrayOf("libtersafe2?\\.so|libGameSecurity\\.so", "OVERALL_SHELL", "腾讯御/游戏安全", 0.80),
         arrayOf("libtp\\.so|libteso\\.so|libtx\\.so", "OVERALL_SHELL", "腾讯安全组件", 0.60),
@@ -82,6 +87,9 @@ object ShellDetect {
     private val ASSET_SIG: List<Array<Any>> = listOf(
         arrayOf("assets/protected_by_np/", "NP", "assets protected_by_np", 0.95),
         arrayOf("assets/protected_by_np/ApkDex2CPro", "DEX2C", "ApkDex2CPro 标记", 0.95),
+        // ⭐ SecShell 强指纹（实测: 爱作业 5.2.5）
+        arrayOf("assets/0OO00l111l1l", "SECSHELL", "SecShell 强指纹", 0.90),
+        arrayOf("assets/o0oooOO0ooOo\\.dat", "SECSHELL", "SecShell 加密数据", 0.88),
         arrayOf("assets/jiagu|assets/360|assets/libjiagu", "OVERALL_SHELL", "assets 360 特征", 0.70),
         arrayOf("assets/ijiami|assets/mobisec", "OVERALL_SHELL", "assets 爱加密", 0.75),
         arrayOf("assets/dexhelper|assets/bangcle", "OVERALL_SHELL", "assets 梆梆", 0.75),
@@ -276,9 +284,16 @@ object ShellDetect {
             "libexec.so", "libexecmain.so", "libijiami.so",
             "libnmmp.so", "libnmmvm.so",
             "libmobisec.so", "libmobisecx.so",
-            "libchaosvmp.so", "libddog.so", "libfdog.so"
+            "libchaosvmp.so", "libddog.so", "libfdog.so",
+            "libshellsuper.so", "libshell-super.so",
+            "libnesec.so", "libsecneo.so", "libolivesec.so"
         )
-        val soPrefix = listOf("libshell-", "libshella-")
+        // 前缀匹配（容忍包名/版本后缀，如 libshell-super.<pkg>.so / libshella-4.6.2.2.so）
+        val soPrefix = listOf(
+            "libshell-", "libshella-", "libshell-super.",
+            "libnesec", "libsecneo", "libolive",
+            "libnagain", "librsec"
+        )
         val assetKeys = listOf("fsapk", "libjiagu", "libsecex", "ijiami",
                                "libsecmain", "0OO00l111l1l", "o0oooOO0ooOo.dat",
                                "libDexHelper")
