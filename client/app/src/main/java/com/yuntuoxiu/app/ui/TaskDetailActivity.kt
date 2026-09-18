@@ -210,6 +210,15 @@ class TaskDetailActivity : AppCompatActivity() {
         return try {
             val sb = StringBuilder()
 
+            // ⭐ v2.0：可脱性评估（提交后即知能否脱，避免白等）
+            if (!t.unpackLevel.isNullOrBlank()) {
+                sb.append("【可脱性】${t.unpackLabel}\n")
+                if (!t.unpackAdvice.isNullOrBlank()) {
+                    sb.append("  ${t.unpackAdvice}\n")
+                }
+                sb.append("\n")
+            }
+
             // ⭐ v1.6.7：本地骨架任务明确提示
             val isSkeleton = t.localSkeleton || t.taskId.startsWith("local_")
             if (isSkeleton && t.handlerTrace.isEmpty()) {

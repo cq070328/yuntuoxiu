@@ -72,6 +72,9 @@ data class TaskMetaView(
     @SerializedName("shell_tag") val shellTag: String? = null,
     @SerializedName("shell_confidence") val shellConfidence: Double? = null,
     @SerializedName("shell_reasons") val shellReasons: List<String> = emptyList(),
+    // ⭐ v2.0：可脱性评估
+    @SerializedName("unpack_level") val unpackLevel: String? = null,
+    @SerializedName("unpack_advice") val unpackAdvice: String? = null,
     @SerializedName("fail_code") val failCode: String? = null,
     @SerializedName("artifact_status") val artifactStatus: String? = null,
     @SerializedName("handler_trace") val handlerTrace: List<Map<String, Any?>> = emptyList(),
@@ -152,6 +155,18 @@ data class TaskMetaView(
             "UNKNOWN" -> "未知"
             null -> "未识别"
             else -> shellTag
+        }
+
+    /** ⭐ v2.0：可脱性等级中文标签 */
+    val unpackLabel: String
+        get() = when (unpackLevel) {
+            "FULL" -> "✅ 可完整脱"
+            "PARTIAL" -> "⚠️ 可部分脱"
+            "NEED_SO" -> "❌ 需 SO 逆向"
+            "NEED_VM" -> "❌ 需 VM 还原"
+            "MANUAL" -> "❌ 需人工分析"
+            null -> ""
+            else -> unpackLevel ?: ""
         }
 }
 
