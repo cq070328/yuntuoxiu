@@ -126,16 +126,9 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<View>(R.id.btnPickApk).setOnClickListener { chooseApkSource() }
 
-        findViewById<View>(R.id.btnStartWorker).setOnClickListener {
-            try {
-                startForegroundService(Intent(this, WorkerService::class.java))
-                LogStore.i(TAG, "已请求启动 Worker")
-                Toast.makeText(this, "Worker 已启动", Toast.LENGTH_SHORT).show()
-            } catch (t: Throwable) {
-                LogStore.e(TAG, "启动 Worker 失败: ${t.message}")
-                Toast.makeText(this, "启动失败: ${t.message}", Toast.LENGTH_LONG).show()
-            }
-        }
+        // ⭐ v1.9.2：「处理」按钮已移除（与「一键脱修」合并为单一入口）。
+        //   任务提交后，Worker 由 Application/一键脱修自动拉起；
+        //   用户只需：选APK → 一键脱修。
 
         // 【新增】清除日志按钮
         findViewById<View>(R.id.btnClearLog).setOnClickListener {

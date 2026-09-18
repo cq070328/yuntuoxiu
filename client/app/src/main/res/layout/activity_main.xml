@@ -200,24 +200,6 @@
             android:text="选APK" />
 
         <Button
-            android:id="@+id/btnStartWorker"
-            style="@style/YtxButton.Small"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_weight="1"
-            android:layout_marginStart="6dp"
-            android:minWidth="0dp"
-            android:paddingStart="2dp"
-            android:paddingEnd="2dp"
-            android:singleLine="true"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:insetLeft="0dp"
-            android:insetRight="0dp"
-            android:textSize="11sp"
-            android:text="处理" />
-
-        <Button
             android:id="@+id/btnDiagnose"
             style="@style/YtxButton.Small"
             android:layout_width="0dp"
