@@ -1426,19 +1426,27 @@ class MainActivity : AppCompatActivity() {
         if (refreshing) return
         refreshing = true
         lifecycleScope.launch {
-            val tasks = withContext(Dispatchers.IO) {
-                try { TaskRepository.listTasks() } catch (t: Throwable) {
-                    LogStore.e(TAG, "读取任务失败: ${t.message}")
-                    emptyList()
+            // ⭐ v1.8.9：用 try/finally 保证 refreshing 复位。
+            //   旧实现若 submit/去重抛异常，refreshing 会永久 true，
+            //   导致此后列表**永不刷新**（表现为「提交后任务列表里没任务」）。
+            try {
+                val tasks = withContext(Dispatchers.IO) {
+                    try { TaskRepository.listTasks() } catch (t: Throwable) {
+                        LogStore.e(TAG, "读取任务失败: ${t.message}")
+                        emptyList()
+                    }
                 }
+                val deduped = try { dedupeLocalSkeleton(tasks) } catch (t: Throwable) {
+                    LogStore.e(TAG, "去重失败: ${t.message}"); tasks
+                }
+                adapter.submit(deduped)
+                tvTaskCount.text = "任务列表（${deduped.size}）"
+                hasActiveTask = deduped.any { !it.isTerminal }
+            } catch (t: Throwable) {
+                LogStore.e(TAG, "刷新任务列表异常: ${t.message}")
+            } finally {
+                refreshing = false
             }
-            // 【提速】去掉本地骨架中「已被后端处理」的重复项
-            val deduped = dedupeLocalSkeleton(tasks)
-            adapter.submit(deduped)
-            tvTaskCount.text = "任务列表（${deduped.size}）"
-            // 记录是否有活跃任务，供自适应刷新使用
-            hasActiveTask = deduped.any { !it.isTerminal }
-            refreshing = false
         }
     }
 
