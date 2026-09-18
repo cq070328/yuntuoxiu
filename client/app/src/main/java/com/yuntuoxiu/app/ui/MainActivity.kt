@@ -36,7 +36,7 @@ import com.yuntuoxiu.app.data.TaskMetaView
 import com.yuntuoxiu.app.data.TaskRepository
 import com.yuntuoxiu.app.shizuku.ShizukuClient
 import com.yuntuoxiu.app.shizuku.ShizukuShellExecutor
-import com.yuntuoxiu.app.worker.TermuxBridge
+import com.yuntuoxiu.app.worker.BackendBridge
 import com.yuntuoxiu.app.worker.WorkerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -313,7 +313,7 @@ class MainActivity : AppCompatActivity() {
                 sb.append("  ${readBackendPref()}\n")
 
                 sb.append("\n[可选环境]\n")
-                sb.append("  Termux: ${TermuxBridge.isTermuxInstalled(this@MainActivity)}\n")
+                sb.append("  容器后端: ${BackendBridge.readDaemonStatus().second}\n")
                 sb.append("  容器: ${File("/root/ytx-tools/apktool.jar").exists()}\n")
 
                 sb.toString()
@@ -385,16 +385,18 @@ class MainActivity : AppCompatActivity() {
                 }
                 val containerOk = File("/root/ytx-tools/apktool.jar").exists() ||
                         File("${YunTuoXiuApp.TOOLS_DIR}/apktool.jar").exists()
-                val termuxOk = TermuxBridge.isTermuxInstalled(this@MainActivity)
+                // ⭐ v1.8.4：Termux 已弃用 -> 用「容器后端在线」替代 termuxOk
+                val backendOk = BackendBridge.readDaemonStatus().first
 
                 val pick = when (pref) {
                     "cloud" -> if (cloudOk) "cloud" else null
                     "container" -> if (containerOk) "container" else null
-                    "termux" -> if (termuxOk) "termux" else null
+                    // Termux 已弃用：选择 termux 时回退到容器后端
+                    "termux" -> if (backendOk) "container" else null
                     else -> when {
                         cloudOk -> "cloud"
                         containerOk -> "container"
-                        termuxOk -> "termux"
+                        backendOk -> "container"
                         else -> null
                     }
                 }
@@ -1011,7 +1013,7 @@ class MainActivity : AppCompatActivity() {
                 sb.append("  偏好: ${readBackendPref()}\n")
                 sb.append("  ${if (File("$ws/yuntuoxiu-dev/token.txt").exists()) "✅" else "❌"} 云端（GitHub）\n")
                 sb.append("  ${if (File("/root/ytx-tools/apktool.jar").exists()) "✅" else "❌"} 容器（Operit）\n")
-                sb.append("  ${if (TermuxBridge.isTermuxInstalled(this@MainActivity)) "✅" else "❌"} Termux\n")
+                sb.append("  ${if (BackendBridge.readDaemonStatus().first) "✅" else "❌"} 容器后端（调度器+worker）\n")
                 sb.toString()
             }
             showResultDialog("环境自检", rep)
