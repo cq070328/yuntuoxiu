@@ -1,129 +1,122 @@
 package com.yuntuoxiu.app.shizuku
 
-import android.app.Service
-import android.content.Intent
+import android.content.Context
 import android.os.Bundle
-import android.os.IBinder
 import android.os.RemoteCallbackList
 import android.util.Log
 
 /**
- * 云脱修 Shizuku UserService 实现。
+ * 云脱修 Shizuku UserService 实现（v1.8.5 关键修正）。
  *
- * 运行环境：由 Shizuku server（shell uid）启动本服务，因此本进程内
- * 可直接调用 pm / am / dumpsys 等系统命令，等效 adb shell 能力（无需 root）。
+ * ⚠️ 重大修正 —— 官方规则（Shizuku-API README）：
+ *     "Unlike Bound service, the service class must implement IBinder interface.
+ *      The usual usage is `public class YourService extends IYouAidlInterface.Stub`."
  *
- * ⚠️ 基类对齐（已按官方 API 13.1.5 核实）：
- *   `dev.rikka.shizuku:api` 中**不存在** `rikka.shizuku.ShizukuService` 类
- *   （经 AAR 反编译核实类清单）。Shizuku 的 UserService 就是一个**普通
- *   Android Service**，通过 `Shizuku.bindUserService(UserServiceArgs, conn)`
- *   绑定；Shizuku 的 server 会用 shell uid 拉起它。
- *   因此这里继承标准 `android.app.Service`，在 onBind 里返回 AIDL binder。
+ *   即：UserService 类**必须直接继承 AIDL 的 Stub**（实现 IBinder），
+ *   **不是**继承 android.app.Service、也不是在 onBind 里返回 binder！
  *
- * 能力封装：
- *  - installApk / uninstallApp / startActivity / clearAppData / getAppInfo
- *  - exec / execWithTimeout（任意 shell）
- * 每个能力都做「命令输出 -> 错误码」二次映射，返回码可直接对齐后端 fail_code。
+ *   旧实现 `class YunTuoXiuUserService : Service()` 是**普通 Bound Service** 的写法，
+ *   而 Shizuku 的 UserService 由 shell uid 在**独立进程**里实例化（不走 onBind），
+ *   因此旧实现会导致 `bindUserService` 永远不回调 `onServiceConnected`
+ *   → 所有 Shizuku 操作报 ERR_SERVICE_NOT_BOUND(-1003)。
+ *
+ *   构造函数（官方说明）：
+ *     · 可提供「默认构造函数」与「带 Context 参数的构造函数」
+ *     · Shizuku v13 会**优先尝试带 Context 的构造函数**；旧版用默认构造函数
+ *     · 注意：此处的 Context 与普通 Android App 的 Context 行为不同
+ *       （不能用于 registerReceiver / getContentResolver 等）
+ *
+ *   能力封装：
+ *     installApk / uninstallApp / startActivity / clearAppData / getAppInfo /
+ *     exec / execWithTimeout
+ *   每个能力都做「命令输出 -> 错误码」二次映射，返回码对齐后端 fail_code。
  */
-class YunTuoXiuUserService : Service() {
+class YunTuoXiuUserService : IYunTuoXiuService.Stub {
 
     companion object {
         private const val TAG = "YunTuoXiuUserService"
         const val VERSION = 1
     }
 
-    // 回调列表（线程安全）
+    /** 回调列表（线程安全） */
     private val callbacks = RemoteCallbackList<IYunTuoXiuCallback>()
 
-    private val binder: IYunTuoXiuService.Stub = object : IYunTuoXiuService.Stub() {
+    /** 默认构造函数（旧版 Shizuku 使用） */
+    constructor() : super()
 
-        override fun getVersion(): Int = VERSION
+    /** 带 Context 的构造函数（Shizuku v13 优先使用） */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(context: Context) : super()
 
-        override fun exec(cmd: String): Bundle =
-            ShizukuShellExecutor.execWithTimeout(cmd, ShizukuShellExecutor.DEFAULT_TIMEOUT_MS)
+    override fun getVersion(): Int = VERSION
 
-        override fun execWithTimeout(cmd: String, timeoutMs: Int): Bundle =
-            ShizukuShellExecutor.execWithTimeout(cmd, timeoutMs)
+    override fun exec(cmd: String): Bundle =
+        ShizukuShellExecutor.execWithTimeout(cmd, ShizukuShellExecutor.DEFAULT_TIMEOUT_MS)
 
-        // ---------------- 安装 ----------------
-        override fun installApk(apkPath: String, replace: Boolean): Bundle {
-            if (apkPath.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
-            // Android 10+ 需要指定用户；-r 覆盖安装，-t 允许测试包
-            val flag = if (replace) "-r -t" else "-t"
-            val r = ShizukuShellExecutor.execWithTimeout(
-                "pm install $flag \"$apkPath\"", 120_000)
-            return mapCommandResult(r, "install")
-        }
+    override fun execWithTimeout(cmd: String, timeoutMs: Int): Bundle =
+        ShizukuShellExecutor.execWithTimeout(cmd, timeoutMs)
 
-        // ---------------- 卸载 ----------------
-        override fun uninstallApp(pkg: String): Bundle {
-            if (pkg.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
-            val r = ShizukuShellExecutor.execWithTimeout("pm uninstall \"$pkg\"", 60_000)
-            return mapCommandResult(r, "uninstall")
-        }
-
-        // ---------------- 启动 ----------------
-        override fun startActivity(pkg: String, cls: String): Bundle {
-            if (pkg.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
-            val cmd = if (cls.isBlank()) {
-                // 用 monkey 启动 launcher 入口
-                "monkey -p \"$pkg\" -c android.intent.category.LAUNCHER 1"
-            } else {
-                "am start -n \"$pkg/$cls\""
-            }
-            val r = ShizukuShellExecutor.execWithTimeout(cmd, 30_000)
-            return mapCommandResult(r, "start")
-        }
-
-        // ---------------- 清数据 ----------------
-        override fun clearAppData(pkg: String): Bundle {
-            if (pkg.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
-            val r = ShizukuShellExecutor.execWithTimeout("pm clear \"$pkg\"", 30_000)
-            return mapCommandResult(r, "clear")
-        }
-
-        // ---------------- 应用信息 ----------------
-        override fun getAppInfo(pkg: String): Bundle {
-            if (pkg.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
-            val r = ShizukuShellExecutor.execWithTimeout("dumpsys package \"$pkg\"", 30_000)
-            if (r.getInt("code") != ShizukuErrorCodes.OK) {
-                return mapCommandResult(r, "getinfo")
-            }
-            val out = r.getString("stdout") ?: ""
-            val info = Bundle()
-            info.putInt("code", ShizukuErrorCodes.OK)
-            info.putString("versionName", regexValue(out, "versionName=([^\\s]+)"))
-            info.putString("versionCode", regexValue(out, "versionCode=(\\d+)"))
-            info.putString("firstInstallTime", regexValue(out, "firstInstallTime=(.+(?=\\n))"))
-            info.putString("raw", out.take(4000))
-            return info
-        }
-
-        // ---------------- 回调 ----------------
-        override fun registerCallback(cb: IYunTuoXiuCallback?) {
-            if (cb != null) callbacks.register(cb)
-        }
-
-        override fun unregisterCallback(cb: IYunTuoXiuCallback?) {
-            if (cb != null) callbacks.unregister(cb)
-        }
+    // ---------------- 安装 ----------------
+    override fun installApk(apkPath: String, replace: Boolean): Bundle {
+        if (apkPath.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
+        // Android 10+ 需要指定用户；-r 覆盖安装，-t 允许测试包
+        val flag = if (replace) "-r -t" else "-t"
+        val r = ShizukuShellExecutor.execWithTimeout(
+            "pm install $flag \"$apkPath\"", 120_000)
+        return mapCommandResult(r, "install")
     }
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    // ---------------- 卸载 ----------------
+    override fun uninstallApp(pkg: String): Bundle {
+        if (pkg.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
+        val r = ShizukuShellExecutor.execWithTimeout("pm uninstall \"$pkg\"", 60_000)
+        return mapCommandResult(r, "uninstall")
+    }
 
-    override fun onDestroy() {
-        // 通知所有客户端：服务即将断开
-        val n = callbacks.beginBroadcast()
-        for (i in 0 until n) {
-            try {
-                callbacks.getBroadcastItem(i).onServiceDisconnected(ShizukuErrorCodes.ERR_BINDER_DEAD)
-            } catch (e: Exception) {
-                Log.w(TAG, "回调通知失败", e)
-            }
+    // ---------------- 启动 ----------------
+    override fun startActivity(pkg: String, cls: String): Bundle {
+        if (pkg.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
+        val cmd = if (cls.isBlank()) {
+            // 用 monkey 启动 launcher 入口
+            "monkey -p \"$pkg\" -c android.intent.category.LAUNCHER 1"
+        } else {
+            "am start -n \"$pkg/$cls\""
         }
-        callbacks.finishBroadcast()
-        callbacks.kill()
-        super.onDestroy()
+        val r = ShizukuShellExecutor.execWithTimeout(cmd, 30_000)
+        return mapCommandResult(r, "start")
+    }
+
+    // ---------------- 清数据 ----------------
+    override fun clearAppData(pkg: String): Bundle {
+        if (pkg.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
+        val r = ShizukuShellExecutor.execWithTimeout("pm clear \"$pkg\"", 30_000)
+        return mapCommandResult(r, "clear")
+    }
+
+    // ---------------- 应用信息 ----------------
+    override fun getAppInfo(pkg: String): Bundle {
+        if (pkg.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
+        val r = ShizukuShellExecutor.execWithTimeout("dumpsys package \"$pkg\"", 30_000)
+        if (r.getInt("code") != ShizukuErrorCodes.OK) {
+            return mapCommandResult(r, "getinfo")
+        }
+        val out = r.getString("stdout") ?: ""
+        val info = Bundle()
+        info.putInt("code", ShizukuErrorCodes.OK)
+        info.putString("versionName", regexValue(out, "versionName=([^\\s]+)"))
+        info.putString("versionCode", regexValue(out, "versionCode=(\\d+)"))
+        info.putString("firstInstallTime", regexValue(out, "firstInstallTime=(.+(?=\\n))"))
+        info.putString("raw", out.take(4000))
+        return info
+    }
+
+    // ---------------- 回调 ----------------
+    override fun registerCallback(cb: IYunTuoXiuCallback?) {
+        if (cb != null) callbacks.register(cb)
+    }
+
+    override fun unregisterCallback(cb: IYunTuoXiuCallback?) {
+        if (cb != null) callbacks.unregister(cb)
     }
 
     // ---------------- 辅助 ----------------

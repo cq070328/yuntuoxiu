@@ -78,22 +78,11 @@
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
-        <!-- ⭐ v1.8.3 关键修复：Shizuku UserService 必须在此声明！
-             注意：此前 Manifest 未声明本 Service，导致
-               Shizuku.bindUserService() 找不到目标 → 无法用 shell uid 拉起
-               → onServiceConnected 永不回调 → bound 永远 false
-               → 所有 Shizuku 操作报 ERR_SERVICE_NOT_BOUND(-1003)
-               → CLEAR_TARGET/INSTALL_CLONE/START_TARGET 全失败
-               → dump 无产出 → 一键脱修卡在「5/7 等待 dump」。
-
-             说明：
-               · process=":shizuku" 对应
-                 UserServiceArgs.processNameSuffix("shizuku")
-               · exported=false：Shizuku 通过内部机制绑定，无需导出 -->
-        <service
-            android:name=".shizuku.YunTuoXiuUserService"
-            android:exported="false"
-            android:process=":shizuku" />
+        <!-- ⭐ v1.8.5 修正：Shizuku UserService **不需要**在 Manifest 声明！
+             官方 demo（Shizuku-API/demo/AndroidManifest.xml）仅声明 ShizukuProvider。
+             UserService 由 Shizuku 通过 UserServiceArgs(ComponentName) 用 shell uid
+             特殊实例化（class 需 extends IYunTuoXiuService.Stub），不走普通组件绑定。
+             此前误加 <service> 声明，反而干扰绑定。 -->
 
         <!-- ⭐ v1.6.4 FileProvider：任务详情页「一键安装」用系统安装器 -->
         <provider
