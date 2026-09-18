@@ -61,9 +61,44 @@ class YunTuoXiuUserService : IYunTuoXiuService.Stub {
         if (apkPath.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
         // Android 10+ 需要指定用户；-r 覆盖安装，-t 允许测试包
         val flag = if (replace) "-r -t" else "-t"
+
+        // ⭐ v1.8.6 关键修复：Android 14+（实测 Android 16）SELinux 限制
+        //   system_server 无法以 fuse 上下文读取 /sdcard 下的文件：
+        //     avc: denied { read } ... tcontext=u:object_r:fuse:s0
+        //     Error: Can't open file: /storage/emulated/0/... (apk)
+        //   因此 pm install 直接装 /sdcard 下的 APK 会失败。
+        //   正解：先复制到 /data/local/tmp/（shell 可读写），再从那安装。
+        val stagedPath = stageToLocalTmp(apkPath)
+        if (stagedPath == null) {
+            // 复制失败 -> 仍尝试原路径（部分设备/旧系统可用）
+            return mapCommandResult(
+                ShizukuShellExecutor.execWithTimeout(
+                    "pm install $flag \"$apkPath\"", 120_000),
+                "install")
+        }
         val r = ShizukuShellExecutor.execWithTimeout(
-            "pm install $flag \"$apkPath\"", 120_000)
+            "pm install $flag \"$stagedPath\"", 120_000)
+        // 清理中转文件（尽力）
+        ShizukuShellExecutor.execWithTimeout("rm -f \"$stagedPath\"", 10_000)
         return mapCommandResult(r, "install")
+    }
+
+    /**
+     * 把 APK 复制到 /data/local/tmp/ 下的中转路径。
+     *
+     * 目的：绕过 Android 14+ 的 SELinux 限制（system_server 读不了 /sdcard/fuse）。
+     * @return 中转路径；失败返回 null。
+     */
+    private fun stageToLocalTmp(apkPath: String): String? {
+        return try {
+            val dst = "/data/local/tmp/ytx_stage_${System.currentTimeMillis()}.apk"
+            val r = ShizukuShellExecutor.execWithTimeout(
+                "cp -f \"$apkPath\" \"$dst\" && [ -s \"$dst\" ] && echo OK", 120_000)
+            val out = (r.getString("stdout") ?: "")
+            if (out.contains("OK")) dst else null
+        } catch (t: Throwable) {
+            null
+        }
     }
 
     // ---------------- 卸载 ----------------
