@@ -21,8 +21,8 @@ import java.io.File
  * 现在（单一真相源）：
  *   · 任务创建：100% 交给容器后端 watcher。
  *   · APP 职责：只做「设备执行器」——扫描后端下发的
- *     tasks/<t_*>/work/actions/*.req.json，执行（Shizuku 安装/启动/
- *     收集 dump 等）并回写 *.resp.json。
+ *     work/actions 目录下的 req 指令，执行（Shizuku 安装/启动/
+ *     收集 dump 等）并回写 resp。
  *
  * 保留本对象仅因为 WorkerService 仍会调用 processActions()；
  * tick() 保留签名但已废弃为 no-op（向后兼容，避免旧调用点编译失败）。
