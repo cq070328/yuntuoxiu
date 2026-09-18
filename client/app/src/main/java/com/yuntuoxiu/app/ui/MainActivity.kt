@@ -1251,37 +1251,44 @@ class MainActivity : AppCompatActivity() {
      * ⚠️ 关键：APP **无法直接读** /data/app/<pkg>/base.apk（其他 App 私有）
      *    → 必须用 **Shizuku** 复制到可读位置
      */
+    /**
+     * 提交「已安装应用」为新任务（v1.7.1 修复）
+     *
+     * ⚠️ 关键教训（两次踩坑）：
+     *   1) APP 无法读 /data/app/<pkg>/base.apk（其他 App 私有）
+     *   2) APP 无法写 uploads/（目录权限 750，属 u0_a0:media_rw）
+     *   → **全程必须用 Shizuku**（shell 有 media_rw 组 + 能读 /data/app）
+     *   → 不要退回「APP 自己 IO」，那必然失败
+     */
     private fun submitInstalledApp(label: String, pkg: String, srcDir: String) {
         lifecycleScope.launch {
             Toast.makeText(this@MainActivity, "正在提取 $label…", Toast.LENGTH_SHORT).show()
 
             val r = withContext(Dispatchers.IO) {
                 try {
-                    // ① 目标：CLOUD_ROOT/uploads/installed_<pkg>.apk
                     val upDir = File(YunTuoXiuApp.UPLOADS_ROOT)
-                    upDir.mkdirs()
                     val dest = File(upDir, "installed_${pkg}.apk")
 
-                    // ② 用 Shizuku 复制（shell 能读 /data/app/）
-                    val cmd = "cp -f '$srcDir' '${dest.absolutePath}' 2>&1 && " +
-                              "ls -la '${dest.absolutePath}'"
-                    val res = com.yuntuoxiu.app.shizuku.ShizukuShellExecutor.exec(cmd)
+                    // ① 确保 uploads 目录存在（用 Shizuku，保证权限对）
+                    ShizukuShellExecutor.exec("mkdir -p '${upDir.absolutePath}' 2>&1")
+
+                    // ② 全程 Shizuku 复制（读 /data/app + 写 uploads）
+                    val cmd = "cp -f '$srcDir' '${dest.absolutePath}' 2>&1; " +
+                              "echo \"SIZE=\$(stat -c %s '${dest.absolutePath}' 2>/dev/null || echo 0)\""
+                    val res = ShizukuShellExecutor.exec(cmd)
+                    val out = (res.getString("stdout") ?: "").trim()
                     val code = res.getInt("code")
-                    val out = res.getString("stdout") ?: ""
 
-                    if (code != 0 || !dest.exists() || dest.length() < 1024) {
-                        // 退回：尝试直接读（APP 有 MANAGE_EXTERNAL_STORAGE 时可能可行）
-                        try {
-                            val src = File(srcDir)
-                            if (src.exists() && src.canRead()) {
-                                src.copyTo(dest, overwrite = true)
-                            }
-                        } catch (_: Throwable) {}
-                    }
+                    // 从输出里解析 SIZE=
+                    val size = Regex("SIZE=(\\d+)").find(out)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
 
-                    if (!dest.exists() || dest.length() < 1024) {
+                    if (code != 0 || size < 1024) {
                         return@withContext SubmitResult.Failure(
-                            "无法读取应用 APK（需 Shizuku 授权）\n$out")
+                            "Shizuku 复制失败（code=$code, size=$size）\n" +
+                            "源: $srcDir\n" +
+                            "目标: ${dest.absolutePath}\n" +
+                            "输出: $out\n\n" +
+                            "请确认：① Shizuku 已授权 ② 源 APK 路径正确")
                     }
 
                     // ③ 提交任务（源用 dest）
