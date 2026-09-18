@@ -299,45 +299,44 @@ class TaskDetailActivity : AppCompatActivity() {
         }
     }
 
-    /** 本地安装 APK（优先 Shizuku；否则用系统 Installer） */
+    /** 本地安装 APK（⭐ v1.8.8：只用 Shizuku 静默安装，不再回退系统安装器）。
+     *
+     *  旧实现失败时回退「系统安装器」→ 弹出系统 UI 且提示「删除旧版」，
+     *  与 APP 内一键脱修的静默安装体验不一致。
+     *  现改为：Shizuku 复制到 /data/local/tmp → 先卸载旧版 → pm install，
+     *  全静默、无系统弹窗；安装结果用 Toast 反馈。
+     */
     private fun installApk(path: String) {
         lifecycleScope.launch {
             Toast.makeText(this@TaskDetailActivity, "安装中…", Toast.LENGTH_SHORT).show()
-            // ① 优先 Shizuku（静默安装，替换）
-            val ok = withContext(Dispatchers.IO) {
+            val detail = withContext(Dispatchers.IO) {
                 try {
-                    val r = com.yuntuoxiu.app.shizuku.ShizukuClient
-                        .installApk(path, replace = true)
-                    r.getInt("code") == com.yuntuoxiu.app.shizuku.ShizukuErrorCodes.OK
+                    val f = java.io.File(path)
+                    if (!f.exists()) return@withContext "产物不存在: $path"
+                    // 从任务 meta 取包名（用于卸载旧版）
+                    val pkg = try {
+                        com.yuntuoxiu.app.data.TaskRepository.loadTask(taskId)?.packageName
+                    } catch (t: Throwable) { null }
+                    val staged = "/data/local/tmp/ytx_ui_${System.currentTimeMillis()}.apk"
+                    val uninstall = if (!pkg.isNullOrBlank())
+                        "pm uninstall \"$pkg\" >/dev/null 2>&1; " else ""
+                    val cmd = "cp -f '${f.absolutePath}' '$staged' && " +
+                            uninstall +
+                            "pm install -r -t -d '$staged' 2>&1 | tail -2; " +
+                            "rm -f '$staged'"
+                    val r = com.yuntuoxiu.app.shizuku.ShizukuShellExecutor.exec(cmd)
+                    (r.getString("stdout") ?: "") + (r.getString("stderr") ?: "")
                 } catch (t: Throwable) {
-                    LogStore.w(TAG, "Shizuku 安装失败: ${t.message}")
-                    false
+                    "安装异常: ${t.message}"
                 }
             }
-            if (ok) {
-                Toast.makeText(this@TaskDetailActivity,
-                    "✅ 已通过 Shizuku 安装", Toast.LENGTH_SHORT).show()
-                load()
-                return@launch
-            }
-            // ② 回退：系统安装器（让用户确认）
-            try {
-                val f = java.io.File(path)
-                val uri = androidx.core.content.FileProvider.getUriForFile(
-                    this@TaskDetailActivity,
-                    "$packageName.fileprovider",
-                    f)
-                val i = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, "application/vnd.android.package-archive")
-                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                startActivity(i)
-            } catch (t: Throwable) {
-                Toast.makeText(this@TaskDetailActivity,
-                    "安装失败: ${t.message}\n路径已可复制，请手动安装",
-                    Toast.LENGTH_LONG).show()
-            }
+            val ok = detail.contains("Success", ignoreCase = true)
+            Toast.makeText(this@TaskDetailActivity,
+                if (ok) "✅ 已通过 Shizuku 静默安装"
+                else "❌ 安装失败：${detail.trim().take(160)}",
+                if (ok) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+            LogStore.i(TAG, "installApk ok=$ok detail=${detail.trim().take(200)}")
+            if (ok) load()
         }
     }
 

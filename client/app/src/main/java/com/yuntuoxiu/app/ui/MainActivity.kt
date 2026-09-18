@@ -615,10 +615,21 @@ class MainActivity : AppCompatActivity() {
                 // ---------- ④ 安装 + 启动 ----------
                 stage = "4/7 安装 + 启动"
                 log.append("[$stage] …\n")
-                withContext(Dispatchers.IO) {
-                    ShizukuShellExecutor.exec(
+                // ⭐ v1.8.8：安装前先卸旧版（避免 lspatch 注入版与设备原版签名冲突
+                //   导致 INSTALL_FAILED_INCOMPATIBLE）。安装走 /data/local/tmp 中转，
+                //   绕开 Android 14+ SELinux 对 /sdcard 的读取限制。
+                val installOut = withContext(Dispatchers.IO) {
+                    val r = ShizukuShellExecutor.exec(
                         "cp -f '${injected.absolutePath}' /data/local/tmp/ytx_oc.apk && " +
-                        "pm install -r -d /data/local/tmp/ytx_oc.apk 2>&1 | tail -1")
+                        "pm uninstall $pkg >/dev/null 2>&1; " +
+                        "pm install -r -d /data/local/tmp/ytx_oc.apk 2>&1 | tail -2")
+                    (r.getString("stdout") ?: "") + (r.getString("stderr") ?: "")
+                }
+                log.append("  ${installOut.trim().take(200)}\n")
+                if (!installOut.contains("Success", ignoreCase = true)) {
+                    fail("安装失败：\n${installOut.trim().take(400)}\n\n" +
+                        "提示：若为签名冲突，可先手动卸载设备上的「爱作业」再重试。")
+                    return@launch
                 }
                 withContext(Dispatchers.IO) {
                     ShizukuShellExecutor.exec(
