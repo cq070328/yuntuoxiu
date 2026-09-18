@@ -520,6 +520,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * ⭐ v1.9.0 一键脱修（统一入口 —— 驱动后端状态机）
+     *
+     * 架构（顶级工程师定稿：单一真相源）：
+     *   任务创建 100% 由容器后端 watcher 负责；
+     *   本按钮**不再让 APP 自己跑注入/安装**（那样会与后端状态机并发冲突），
+     *   而是：
+     *     ① 确保容器后端在线（离线则引导启动）
+     *     ② 从「已提交任务」里选一个
+     *     ③ **推进并监控后端状态机**：轮询 task_meta，实时显示进度
+     *     ④ 需要设备操作的动作（CLEAR/INSTALL/START/DUMP）由 WorkerService
+     *        自动消费 work/actions/ 并回执（无需本函数干预）
+     *     ⑤ 任务到终态 -> 展示结果（成功/失败原因）
+     *
+     * 好处：
+     *   · 彻底消除「APP 与后端并发注入」的资源竞争/OOM；
+     *   · APP 只做「设备执行器 + UI」，职责单一；
+     *   · 进度可见（状态机每步都反映在 meta 上）。
+     */
     private fun oneClickRun(task: TaskMetaView) {
         val pkg = task.lookupPackage
         if (pkg.isNullOrBlank()) {
@@ -528,175 +547,70 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            val ws = YunTuoXiuApp.WORKSPACE_ROOT
             val tid = task.taskId
-            val taskDir = File("$ws/unpackcloud/tasks/$tid")
             val log = StringBuilder("== 一键脱修 · $tid ==\n\n")
-            var stage = ""
 
-            fun fail(msg: String) {
-                log.append("\n❌ [$stage] $msg\n")
+            // ① 确保后端在线
+            val (alive, desc) = withContext(Dispatchers.IO) {
+                com.yuntuoxiu.app.worker.BackendBridge.readDaemonStatus()
+            }
+            log.append("后端状态: $desc\n\n")
+            if (!alive) {
+                showWorkerOfflineDialog { oneClickRun(task) }
+                return@launch
+            }
+
+            // ② 确保 WorkerService 在跑（执行设备动作）
+            try {
+                startForegroundService(android.content.Intent(this@MainActivity,
+                    com.yuntuoxiu.app.worker.WorkerService::class.java))
+            } catch (_: Throwable) {}
+
+            log.append("已接管，正在推进后端流水线…\n")
+            log.append("（注入/安装/dump/修复 由后端状态机自动完成）\n\n")
+            LogStore.i(TAG, "一键脱修(状态机模式) 启动: $tid")
+
+            // ③ 监控状态机推进（最多 ~20 分钟）
+            var lastState = ""
+            val terminal = setOf("SUCCESS", "FAILED", "CANCELLED", "PRE_CHECK_FAILED")
+            val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
+            var finalTask: TaskMetaView? = null
+
+            while (System.currentTimeMillis() < deadline) {
+                delay(2500)
+                val t = withContext(Dispatchers.IO) {
+                    try { TaskRepository.loadTask(tid) } catch (_: Throwable) { null }
+                } ?: continue
+                if (t.state != lastState) {
+                    lastState = t.state
+                    log.append("[${t.stateLabel}] ${t.state}\n")
+                    LogStore.i(TAG, "任务 $tid 状态 -> ${t.state}")
+                }
+                if (t.state in terminal) {
+                    finalTask = t
+                    break
+                }
+            }
+
+            // ④ 展示结果
+            val ft = finalTask
+            if (ft == null) {
+                showResultDialog("一键脱修 · 超时",
+                    log.toString() + "\n⚠️ 20 分钟内未到终态，请稍后在任务详情查看。")
+            } else if (ft.state == "SUCCESS") {
+                val outApk = File("${YunTuoXiuApp.WORKSPACE_ROOT}/云脱修-${tid}.apk")
+                log.append("\n🎉 完成！\n")
+                if (outApk.exists()) {
+                    log.append("产物: ${outApk.absolutePath}\n（${outApk.length() / 1024}KB）\n")
+                }
+                showResultDialog("一键脱修 · 成功", log.toString())
+            } else {
+                log.append("\n❌ 失败: ${ft.stateLabel}\n")
+                ft.failCode?.let { log.append("错误码: $it\n") }
+                log.append("可在任务详情查看「处理记录」定位。\n")
                 showResultDialog("一键脱修 · 失败", log.toString())
             }
-
-            try {
-                // ---------- ① 壳诊断 ----------
-                stage = "1/7 壳诊断"
-                log.append("[$stage] …\n")
-                val srcApk = File(task.sourceApk)
-                if (!srcApk.exists()) { fail("原 APK 不存在: ${task.sourceApk}"); return@launch }
-                val v = com.yuntuoxiu.app.worker.ShellDetect.detect(srcApk.absolutePath)
-                val shellTag = v.tag
-                log.append("  壳类型: $shellTag (${(v.confidence * 100).toInt()}%)\n")
-                log.append("  DEX: ${v.dexCount} 个\n")
-
-                val isRealShell = !shellTag.equals("NONE", true) &&
-                        !shellTag.equals("CLEAN", true) && v.confidence > 0.5
-
-                // ⭐ v1.6.3 关键修复：无壳 App 不需要注入！
-                //   原因：注入 lspatch 后，无壳 App 会因 loadLibrary 失败而崩
-                //        （lspatch 需要目标已有某些 native 依赖）
-                //   正确做法：无壳 -> 直接结束，提示「无需脱壳」
-                if (!isRealShell) {
-                    log.append("\n✅ 未检测到加固（壳类型: $shellTag）\n")
-                    log.append("无需脱壳 —— 原 APK 可直接使用。\n\n")
-                    log.append("如果确实有壳但未被识别，可：\n")
-                    log.append("· 工具 →「壳诊断」详情确认\n")
-                    log.append("· 工具 →「smali 替换」手动修\n")
-                    showResultDialog("一键脱修 · 无需处理", log.toString())
-                    return@launch
-                }
-
-                // ---------- ② 壳清理 ----------
-                stage = "2/7 壳清理"
-                var workApk = task.sourceApk
-                if (isRealShell) {
-                    log.append("[$stage] …\n")
-                    val cleaned = File(taskDir, "cleaned.apk")
-                    cleaned.parentFile?.mkdirs()
-                    val n = withContext(Dispatchers.IO) {
-                        com.yuntuoxiu.app.worker.ShellDetect.cleanShellSo(
-                            task.sourceApk, cleaned.absolutePath)
-                    }
-                    if (n > 0 && cleaned.exists()) {
-                        workApk = cleaned.absolutePath
-                        log.append("  已删壳条目 $n 个\n")
-                    } else {
-                        log.append("  无壳特征可删（跳过）\n")
-                    }
-                } else {
-                    log.append("[$stage] 跳过（非加固）\n")
-                }
-
-                // ---------- ③ CLI 注入（委托容器） ----------
-                stage = "3/7 注入脱壳模块"
-                if (!com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()) {
-                    fail("容器 worker 未运行。\n\n" +
-                        "注入/构建需要容器（有 bash+java+python3），\n" +
-                        "而 Shizuku shell 没有这些。\n\n" +
-                        "解决：在 Operit 终端执行：\n" +
-                        "  " + YunTuoXiuApp.START_CMD + "\n\n" +
-                        "（或点长按「本地引擎」查看心跳）")
-                    return@launch
-                }
-                log.append("[$stage] …（可能 1-3 分钟）\n")
-                val injected = File(taskDir, "injected.apk")
-                val (injOk, injDetail, _) = com.yuntuoxiu.app.worker.ContainerBridge.execSync(
-                    "$ws/ytx_npatch_inject.sh",
-                    listOf(workApk, injected.absolutePath, pkg,
-                           "--modules", "$ws/ytx-tools/ytxdump-module.apk"),
-                    600_000
-                )
-                if (!injOk || !injected.exists() || injected.length() < 1024) {
-                    fail("注入失败\n$injDetail"); return@launch
-                }
-                log.append("  ✅ 注入产物 ${injected.length() / 1024}KB\n")
-
-                // ---------- ④ 安装 + 启动 ----------
-                stage = "4/7 安装 + 启动"
-                log.append("[$stage] …\n")
-                // ⭐ v1.8.8：安装前先卸旧版（避免 lspatch 注入版与设备原版签名冲突
-                //   导致 INSTALL_FAILED_INCOMPATIBLE）。安装走 /data/local/tmp 中转，
-                //   绕开 Android 14+ SELinux 对 /sdcard 的读取限制。
-                val installOut = withContext(Dispatchers.IO) {
-                    val r = ShizukuShellExecutor.exec(
-                        "cp -f '${injected.absolutePath}' /data/local/tmp/ytx_oc.apk && " +
-                        "pm uninstall $pkg >/dev/null 2>&1; " +
-                        "pm install -r -d /data/local/tmp/ytx_oc.apk 2>&1 | tail -2")
-                    (r.getString("stdout") ?: "") + (r.getString("stderr") ?: "")
-                }
-                log.append("  ${installOut.trim().take(200)}\n")
-                if (!installOut.contains("Success", ignoreCase = true)) {
-                    fail("安装失败：\n${installOut.trim().take(400)}\n\n" +
-                        "提示：若为签名冲突，可先手动卸载设备上的「爱作业」再重试。")
-                    return@launch
-                }
-                withContext(Dispatchers.IO) {
-                    ShizukuShellExecutor.exec(
-                        "am force-stop $pkg; " +
-                        "monkey -p $pkg -c android.intent.category.LAUNCHER 1")
-                }
-                log.append("  已安装并启动\n")
-
-                // ---------- ⑤ 等 dump ----------
-                stage = "5/7 等待 dump"
-                log.append("[$stage] …（最多 30s）\n")
-                val modDump = "/sdcard/Android/data/$pkg/files/ytx_dump"
-                var dexN = 0
-                for (i in 1..10) {
-                    delay(3000)
-                    dexN = withContext(Dispatchers.IO) {
-                        val r = ShizukuShellExecutor.exec(
-                            "ls $modDump/dex_*.dex 2>/dev/null | wc -l")
-                        (r.getString("stdout") ?: "0").trim().toIntOrNull() ?: 0
-                    }
-                    if (dexN > 0) break
-                }
-                if (dexN <= 0) {
-                    fail("30s 内未产出 DEX。可能：\n" +
-                        "· 目标无壳（不需要脱壳）→ 直接用原 APK\n" +
-                        "· 壳对抗（需 smali 替换）→ 去工具里试\n" +
-                        "· 模块未加载（检查日志）")
-                    return@launch
-                }
-                log.append("  ✅ 产出 $dexN 个 dex\n")
-
-                // ---------- ⑥ 收集 ----------
-                stage = "6/7 收集 DEX"
-                log.append("[$stage] …\n")
-                val dumpDir = File(taskDir, "dump")
-                dumpDir.mkdirs()
-                withContext(Dispatchers.IO) {
-                    ShizukuShellExecutor.exec(
-                        "cp -f $modDump/dex_*.dex '${dumpDir.absolutePath}/' 2>/dev/null; " +
-                        "ls '${dumpDir.absolutePath}'/dex_*.dex | wc -l")
-                }
-                log.append("  已收集到 ${dumpDir.absolutePath}\n")
-
-                // ---------- ⑦ 构建（委托容器：替换+对齐+签名） ----------
-                stage = "7/7 构建（替换+对齐+签名）"
-                log.append("[$stage] …\n")
-                val outApk = File("$ws/云脱修-$tid-oc.apk")
-                val (bOk, bDetail, _) = com.yuntuoxiu.app.worker.ContainerBridge.execSync(
-                    "$ws/ytx_build_from_dump.sh",
-                    listOf(task.sourceApk, dumpDir.absolutePath, outApk.absolutePath),
-                    900_000
-                )
-                if (!bOk || !outApk.exists() || outApk.length() < 1024) {
-                    fail("构建失败\n$bDetail"); return@launch
-                }
-                log.append("  ✅ 产物: ${outApk.absolutePath}\n")
-                log.append("  （${outApk.length() / 1024}KB）\n")
-
-                log.append("\n🎉 一键脱修完成！\n")
-                log.append("下一步：安装验证 → bash ytx_diag_launch.sh\n")
-                log.append("若闪退 → 工具里用「smali 替换」修壳桩\n")
-                showResultDialog("一键脱修 · 成功", log.toString())
-                refreshTasks()
-
-            } catch (t: Throwable) {
-                fail("异常: ${t.message}")
-            }
+            refreshTasks()
         }
     }
 
