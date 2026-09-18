@@ -134,10 +134,6 @@ object TaskRepository {
             } catch (e: Exception) {
                 Log.w(TAG, "解析包名失败: ${e.message}"); null
             }
-            val verName = try {
-                context.getPackageManager()
-                    .getPackageArchiveInfo(finalApk.absolutePath, 0)?.versionName
-            } catch (e: Exception) { null }
 
             // 3) 写 create 请求
             val req = TaskCreateRequest(
@@ -149,42 +145,30 @@ object TaskRepository {
             val reqFile = File(uploadsRoot, "create_${UUID.randomUUID()}.req.json")
             reqFile.writeText(gson.toJson(req))
 
-            // 4) 决定由谁创建任务（避免双 watcher 重复建任务）：
-            //    - 有 Termux 且 RUN_COMMAND 可用 -> 只写 create 请求，
-            //      交给 Termux 上的 Python 后端接管（唯一权威 watcher）。
-            //    - 无 Termux -> 退回 APP 内置 AutoWatcher 兜底（本地骨架）。
+            // 4) ⭐ 单一真相源（v1.8.0 架构修正）：
+            //    任务创建**只**交给 Operit 容器后端（termux_backend.sh /
+            //    ytx.sh start 拉起的 Python watcher）。
+            //
+            //    为什么彻底移除「Termux 判定 + AutoWatcher 兜底」：
+            //      · 旧逻辑在有 Termux 时只写 create 请求，无 Termux 时退回
+            //        APP 内置 AutoWatcher 自建 local_* 骨架。
+            //      · 但本机 Termux 未开 allow-external-apps → RUN_COMMAND 抛
+            //        SecurityException → haveTermux=false → **永远走兜底** →
+            //        建出 local_* 骨架后，AutoWatcher.archive() 把 create 请求
+            //        移进 uploads/done/ → 容器后端再也看不到该请求 → 不建 t_*。
+            //      · 结果：任务永远停在 local_* 骨架，永不推进（卡死）。
+            //
+            //    新逻辑：**只写一个 create 请求**，容器后端是唯一 watcher。
+            //    （容器不在线时，请求会安全地留在 uploads/ 等待被消费，不丢。）
             val bridge = com.yuntuoxiu.app.worker.TermuxBridge
-            val haveTermux = try {
-                bridge.isTermuxInstalled(context) && bridge.runCommandPermissionHint(context).first
-            } catch (t: Throwable) { false }
-
-            var created = 0
-            if (haveTermux) {
-                // 只写 create 请求（reqFile 已在上面写好）。
-                // ⚠️ 先检查后端是否已在线：在线就不重复触发启动
-                //    （避免每次提交都通过命令桥拉起 start_all，造成多实例）。
-                try {
-                    val (online, desc) = bridge.readDaemonStatus()
-                    if (online) {
-                        Log.i(TAG, "Termux 后端已在线，无需重启（$desc）")
-                    } else {
-                        Log.i(TAG, "Termux 后端未在线（$desc），尝试启动")
-                        val ok = bridge.startDaemon(context)
-                        Log.i(TAG, if (ok) "已确保 Termux 完整后端在运行" else "Termux 后端启动请求失败")
-                    }
-                } catch (t: Throwable) {
-                    Log.w(TAG, "检查/启动 Termux 后端失败: ${t.message}")
-                }
-            } else {
-                // 无 Termux：本地兜底创建骨架（仅作任务列表秒级占位）
-                created = try {
-                    com.yuntuoxiu.app.worker.AutoWatcher.tick()
-                } catch (t: Throwable) {
-                    Log.w(TAG, "AutoWatcher 触发失败: ${t.message}"); 0
-                }
+            try {
+                val (online, desc) = bridge.readDaemonStatus()
+                Log.i(TAG, "后端状态: $desc（online=$online）")
+            } catch (t: Throwable) {
+                Log.w(TAG, "读取后端状态失败: ${t.message}")
             }
 
-            Log.i(TAG, "已提交: ${finalApk.absolutePath} (pkg=$pkg, haveTermux=$haveTermux, localCreated=$created)")
+            Log.i(TAG, "已提交: ${finalApk.absolutePath} (pkg=$pkg) → 等待容器后端消费")
             SubmitResult.Success(finalApk.absolutePath)
         } catch (e: Exception) {
             SubmitResult.Failure(e.message ?: "提交失败")

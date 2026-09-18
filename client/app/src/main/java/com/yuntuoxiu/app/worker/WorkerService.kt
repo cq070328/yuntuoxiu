@@ -96,15 +96,21 @@ class WorkerService : Service() {
             LogStore.i(TAG, "轮询循环开始（间隔 ${POLL_INTERVAL_MS}ms）")
             while (isActive) {
                 try {
-                    // ① 内置 watcher：消费 uploads 请求 → 创建任务（秒级）
-                    val created = AutoWatcher.tick()
-                    if (created > 0) {
-                        LogStore.i(TAG, "AutoWatcher 创建了 $created 个任务")
-                    }
+                    // ⭐ v1.8.0 架构修正：不再调用 AutoWatcher.tick()。
+                    //
+                    //   原因：任务创建是「容器后端 watcher」的唯一职责。
+                    //   APP 内建 watcher 会造成【双真相源】——
+                    //     · APP 建 local_* 骨架，并把 create 请求归档到
+                    //       uploads/done/ → 容器后端再也看不到请求 → 不建 t_*。
+                    //     · 结果：任务永远停在 local_* 骨架，永不推进。
+                    //
+                    //   现在 APP 只做「设备执行器」：
+                    //     · 扫描 tasks/<t_*>/work/actions/ 下由后端下发的指令
+                    //     · 执行（Shizuku 安装/启动/收集 dump 等）并回执
+                    //   任务创建 100% 交给容器后端。
 
-                    // ② 执行活跃任务的 action 指令
+                    // 执行活跃任务的 action 指令（仅 t_* 正式任务；local_ 已不再产生）
                     val tasks = TaskRepository.listTasks()
-                    // ⚠️ 跳过 local_ 骨架任务（无真实指令，等后端接管后消失）
                     val active = tasks.filter {
                         !it.isTerminal && !it.taskId.startsWith("local_")
                     }
