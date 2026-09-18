@@ -1220,8 +1220,13 @@ class MainActivity : AppCompatActivity() {
             when (r) {
                 is SubmitResult.Success -> {
                     LogStore.i(TAG, "已提交: $label ($pkg)")
-                    Toast.makeText(this@MainActivity, "✅ 已提交：$label", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "✅ 已提交：$label（后端建任务中…）", Toast.LENGTH_LONG).show()
+                    // ⭐ v1.9.3：立即刷 + 3s/6s 后再刷（等后端 watcher 建出 t_* 任务）
                     refreshTasks()
+                    lifecycleScope.launch {
+                        delay(3000); refreshTasks()
+                        delay(3000); refreshTasks()
+                    }
                 }
                 is SubmitResult.Failure -> {
                     LogStore.e(TAG, "提交失败: ${r.reason}")
@@ -1321,9 +1326,10 @@ class MainActivity : AppCompatActivity() {
                 } catch (t: Throwable) {
                     LogStore.e(TAG, "自动刷新异常: ${t.message}")
                 }
-                // ⚠️ 自适应刷新：有活跃任务时 1s 高频（进度可见），
-                //    全部终态时降到 5s（省电、省 IO，避免空转扫目录）。
-                delay(if (hasActiveTask) 1500L else 5000L)
+                // ⚠️ 自适应刷新：有活跃任务时 1.5s 高频（进度可见），
+                //    无活跃任务时 2s（⭐ v1.9.3：从 5s 缩短，让「提交后」
+                //    更快看到后端新建的任务——后端 watch tick 3s + 本刷新增速）。
+                delay(if (hasActiveTask) 1500L else 2000L)
             }
         }
     }
