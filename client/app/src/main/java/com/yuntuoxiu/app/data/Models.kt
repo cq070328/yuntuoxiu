@@ -147,9 +147,11 @@ data class TaskMetaView(
             "HEADER_ERASED" -> "Header擦除"
             "NP" -> "Np加固"
             "METASEC" -> "字节metasec"
+            "SECSHELL" -> "腾讯御安全"   // ⭐ v1.8.4 补齐
             "CLOUD_INJECT" -> "云注入"
             "UNKNOWN" -> "未知"
-            else -> shellTag ?: "未识别"
+            null -> "未识别"
+            else -> shellTag
         }
 }
 
