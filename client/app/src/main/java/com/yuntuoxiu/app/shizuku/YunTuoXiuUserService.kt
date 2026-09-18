@@ -59,28 +59,59 @@ class YunTuoXiuUserService : IYunTuoXiuService.Stub {
     // ---------------- 安装 ----------------
     override fun installApk(apkPath: String, replace: Boolean): Bundle {
         if (apkPath.isBlank()) return err(ShizukuErrorCodes.ERR_INVALID_ARGS)
-        // Android 10+ 需要指定用户；-r 覆盖安装，-t 允许测试包
         val flag = if (replace) "-r -t" else "-t"
 
-        // ⭐ v1.8.6 关键修复：Android 14+（实测 Android 16）SELinux 限制
-        //   system_server 无法以 fuse 上下文读取 /sdcard 下的文件：
+        // ⭐ v1.8.6 修复 1：Android 14+（实测 Android 16）SELinux 限制
+        //   system_server 无法读取 /sdcard（fuse）下的文件：
         //     avc: denied { read } ... tcontext=u:object_r:fuse:s0
-        //     Error: Can't open file: /storage/emulated/0/... (apk)
-        //   因此 pm install 直接装 /sdcard 下的 APK 会失败。
-        //   正解：先复制到 /data/local/tmp/（shell 可读写），再从那安装。
-        val stagedPath = stageToLocalTmp(apkPath)
-        if (stagedPath == null) {
-            // 复制失败 -> 仍尝试原路径（部分设备/旧系统可用）
-            return mapCommandResult(
-                ShizukuShellExecutor.execWithTimeout(
-                    "pm install $flag \"$apkPath\"", 120_000),
-                "install")
-        }
-        val r = ShizukuShellExecutor.execWithTimeout(
+        //   因此先复制到 /data/local/tmp/ 再安装。
+        val stagedPath = stageToLocalTmp(apkPath) ?: apkPath
+
+        // 首次安装
+        var r = ShizukuShellExecutor.execWithTimeout(
             "pm install $flag \"$stagedPath\"", 120_000)
+        var mapped = mapInstallCode(r)
+
+        // ⭐ v1.8.6 修复 2：签名冲突（INSTALL_FAILED_INCOMPATIBLE）自动重试
+        //   场景：设备上已装同名 app（原始签名），lspatch 注入版签名不同，
+        //        `pm install -r` 覆盖安装报「签名不兼容」。
+        //   处理：提取 APK 包名 -> 卸载旧版 -> 重新安装。
+        if (mapped == ShizukuErrorCodes.INSTALL_FAILED_INCOMPATIBLE) {
+            val pkg = extractPackageName(stagedPath)
+            if (!pkg.isNullOrBlank()) {
+                ShizukuShellExecutor.execWithTimeout(
+                    "pm uninstall \"$pkg\"", 60_000)
+                // 卸载后重装
+                r = ShizukuShellExecutor.execWithTimeout(
+                    "pm install $flag \"$stagedPath\"", 120_000)
+                mapped = mapInstallCode(r)
+            }
+        }
+
         // 清理中转文件（尽力）
-        ShizukuShellExecutor.execWithTimeout("rm -f \"$stagedPath\"", 10_000)
+        if (stagedPath != apkPath) {
+            ShizukuShellExecutor.execWithTimeout("rm -f \"$stagedPath\"", 10_000)
+        }
         return mapCommandResult(r, "install")
+    }
+
+    /** 从 APK 提取包名（用 aapt/dumpsys 兜底的方式）。 */
+    private fun extractPackageName(apkPath: String): String? {
+        return try {
+            // pm dump 可解析包的 manifest（无需安装）
+            val r = ShizukuShellExecutor.execWithTimeout(
+                "pm dump \"$apkPath\" 2>/dev/null | grep -m1 'packageName=' | head -1", 30_000)
+            val out = r.getString("stdout") ?: ""
+            Regex("packageName=([\\w\\.]+)").find(out)?.groupValues?.get(1)
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /** 只做 install 的错误码映射（用于判断是否需要重试）。 */
+    private fun mapInstallCode(r: Bundle): Int {
+        val mapped = mapCommandResult(r, "install")
+        return mapped.getInt("code")
     }
 
     /**
@@ -209,6 +240,13 @@ class YunTuoXiuUserService : IYunTuoXiuService.Stub {
         result.putString("stdout", r.getString("stdout") ?: "")
         result.putString("stderr", r.getString("stderr") ?: "")
         result.putString("fail_code", ShizukuErrorCodes.toBackendFailCode(mapped))
+        // ⭐ v1.8.6：把失败原因的**关键摘要**放进 detail 友好位（stderr 首行），
+        //   避免上层只看到「安装失败: 安装失败」这类无信息提示。
+        if (mapped != ShizukuErrorCodes.OK) {
+            val firstErr = r.getString("stderr")?.lineSequence()
+                ?.firstOrNull { it.isNotBlank() }?.take(300) ?: ""
+            result.putString("detail", firstErr)
+        }
         return result
     }
 
