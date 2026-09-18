@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.RemoteException
 import android.util.Log
+import com.yuntuoxiu.app.LogStore
 import rikka.shizuku.Shizuku
 
 /**
@@ -208,17 +209,26 @@ object ShizukuClient {
     fun ensureBound(): Boolean {
         if (bound && service != null) return true
         if (!isGranted()) {
-            Log.w(TAG, "未授权，无法绑定")
+            LogStore.w(TAG, "未授权，无法绑定")
             return false
         }
-        // ⚠️ 避免重复触发 bindUserService（多次绑定会泄漏连接）
+        // ⚠️ 关键修复（v1.8.3）：首次绑定需 Shizuku 拉起一个独立进程，
+        //   可能耗时 >2s。旧逻辑只等 2s 就放弃，且 bindingInFlight 不复位，
+        //   导致「首次绑定慢 -> 超时 -> 后续永远跳过绑定」的死锁。
+        //   现在：
+        //     · 等待窗口放宽到 5s（指数退避）
+        //     · 超时后若仍未连上，复位 bindingInFlight 允许下一轮重试
         if (!bindingInFlight) maybeAutoBind()
-        // 绑定是异步的；指数退避轮询（总上限 ~2s，比原来 3s 更短）
+
         var waited = 0L
-        var step = 50L
-        val deadline = 2000L
+        var step = 60L
+        val deadline = 5000L
+        LogStore.i(TAG, "ensureBound 等待绑定…（deadline=${deadline}ms）")
         while (waited < deadline) {
-            if (bound && service != null) return true
+            if (bound && service != null) {
+                LogStore.i(TAG, "UserService 已绑定（等待 ${waited}ms）")
+                return true
+            }
             try {
                 Thread.sleep(step)
             } catch (e: InterruptedException) {
@@ -226,9 +236,16 @@ object ShizukuClient {
                 break
             }
             waited += step
-            step = (step * 2).coerceAtMost(400L)  // 50->100->200->400
+            step = (step * 2).coerceAtMost(500L)  // 60->120->240->480
         }
-        return bound && service != null
+        val ok = bound && service != null
+        if (!ok) {
+            // 超时仍未连上 -> 复位在途标志，允许下一轮重新尝试绑定
+            //   （异步失败不会触发 onServiceConnected，旧逻辑在此处会死锁）
+            LogStore.w(TAG, "ensureBound 超时未连上（${waited}ms），复位 bindingInFlight 以便重试")
+            bindingInFlight = false
+        }
+        return ok
     }
 
     private fun maybeAutoBind() {
