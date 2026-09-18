@@ -65,20 +65,20 @@ object ShizukuClient {
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            Log.i(TAG, "UserService 已连接")
+            LogStore.i(TAG, "onServiceConnected（UserService 已连接）")
             service = IYunTuoXiuService.Stub.asInterface(binder)
             bound = true
             bindingInFlight = false
             try {
                 service?.registerCallback(remoteCallback)
-                Log.i(TAG, "服务版本: ${service?.getVersion()}")
+                LogStore.i(TAG, "服务版本: ${service?.getVersion()}")
             } catch (e: RemoteException) {
-                Log.w(TAG, "注册回调失败", e)
+                LogStore.w(TAG, "注册回调失败: ${e.message}")
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            Log.w(TAG, "UserService 连接断开")
+            LogStore.w(TAG, "onServiceDisconnected（连接断开）")
             service = null
             bound = false
             bindingInFlight = false
@@ -129,6 +129,9 @@ object ShizukuClient {
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(permissionListener)
         lastPermissionGranted = isGranted()
+        // ⭐ v1.8.5：记录 Shizuku 环境快照（容器可读，便于诊断绑定失败）
+        LogStore.i(TAG, "init: pingBinder=${isAvailable()} granted=$lastPermissionGranted " +
+                "sdk=${Shizuku.getVersion()}")
         if (lastPermissionGranted) maybeAutoBind()
         startHealthCheck()
     }
@@ -251,16 +254,22 @@ object ShizukuClient {
     private fun maybeAutoBind() {
         if (bound) return
         if (bindingInFlight) return        // 已有绑定在途，避免重复
-        if (!isGranted()) return
+        if (!isGranted()) {
+            // ⭐ v1.8.5：此前静默返回，导致「未授权」与「绑定失败」无法区分。
+            LogStore.w(TAG, "maybeAutoBind 跳过：Shizuku 未授权 " +
+                    "(pingBinder=${isAvailable()})")
+            return
+        }
         bindingInFlight = true
         try {
             // ⚠️ 官方 API（13.1.5）签名：`void bindUserService(UserServiceArgs, ServiceConnection)`
             //    —— 无返回值！绑定结果通过 connection 回调得知。
-            Shizuku.bindUserService(userServiceArgs(), connection)
-            Log.i(TAG, "bindUserService 已调用，等待 onServiceConnected 回调")
-        } catch (e: Exception) {
+            val args = userServiceArgs()
+            Shizuku.bindUserService(args, connection)
+            LogStore.i(TAG, "bindUserService 已调用（等待 onServiceConnected）")
+        } catch (e: Throwable) {
             bindingInFlight = false
-            Log.w(TAG, "绑定 UserService 失败", e)
+            LogStore.e(TAG, "bindUserService 抛异常: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
