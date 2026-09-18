@@ -69,6 +69,62 @@ object TaskRepository {
         }
     }
 
+    /**
+     * ⭐ v1.8.9 新增：从 task.log 提炼「处理记录」（人类可读）。
+     *
+     * 背景：详情页的「修复轨迹」只覆盖 REPAIRING 阶段（handler_trace），
+     * 任务在 DUMPING/UPLOADING 等早期阶段时轨迹为空，用户看不到任何进展。
+     * 本方法解析后端写入的 task.log（NDJSON），提取**状态流转**与**指令下发**，
+     * 让任意阶段都有可见的处理记录。
+     */
+    fun buildProgressFromLog(taskId: String): String {
+        return try {
+            val logFile = File(logsRoot, "$taskId/task.log")
+            if (!logFile.exists()) return "（暂无处理记录）"
+            val sb = StringBuilder()
+            var idx = 0
+            logFile.forEachLine { line ->
+                val l = line.trim()
+                if (l.isEmpty() || !l.startsWith("{")) return@forEachLine
+                try {
+                    val o = com.google.gson.JsonParser.parseString(l).asJsonObject
+                    val event = o.get("event")?.asString ?: return@forEachLine
+                    val ts = o.get("ts")?.asString?.substringAfter("T") ?: ""
+                    when (event) {
+                        "task_created" ->
+                            sb.append("• [$ts] 创建任务\n")
+                        "package_resolved" ->
+                            sb.append("• [$ts] 解析包名: ${o.get("package")?.asString ?: "-"}\n")
+                        "state_transition" -> {
+                            idx++
+                            sb.append("• [$ts] 状态: ${o.get("src")?.asString} → " +
+                                    "${o.get("dst")?.asString}\n")
+                        }
+                        "action_emitted" ->
+                            sb.append("    ↳ 下发指令: ${o.get("action")?.asString}\n")
+                        "readonly_copy_made" ->
+                            sb.append("• [$ts] 生成只读副本（隔离）\n")
+                        "lspatch_ok" ->
+                            sb.append("• [$ts] 注入成功（${o.get("output")?.asString?.substringAfterLast('/') ?: ""}）\n")
+                        "lspatch_start" ->
+                            sb.append("• [$ts] 容器侧注入开始…\n")
+                        "dex_merged_ok" ->
+                            sb.append("• [$ts] DEX 合并通过\n")
+                        "task_success" ->
+                            sb.append("• [$ts] ✅ 任务成功\n")
+                        "task_failed" ->
+                            sb.append("• [$ts] ❌ 失败: ${o.get("fail_code")?.asString ?: ""}\n")
+                    }
+                } catch (_: Throwable) {
+                    // 单行解析失败不影响整体
+                }
+            }
+            if (sb.isEmpty()) "（暂无处理记录）" else sb.toString()
+        } catch (t: Throwable) {
+            "（处理记录解析失败: ${t.message}）"
+        }
+    }
+
     // ---------------- 提交新任务 ----------------
 
     /**

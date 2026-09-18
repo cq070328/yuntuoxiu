@@ -245,6 +245,18 @@ class TaskDetailActivity : AppCompatActivity() {
                         "原因: ${safeGet(d, "cause")} ok=${safeGet(d, "ok")}\n")
             }
             val out = sb.toString()
+            // ⭐ v1.8.9：修复轨迹为空（任务尚未到 REPAIRING）时，回退展示
+            //   「处理记录」——从 task.log 提炼的状态流转+指令下发，
+            //   保证详情页任意阶段都有内容可看。
+            if (out.isEmpty() || out == "（暂无修复轨迹）") {
+                val prog = try {
+                    com.yuntuoxiu.app.data.TaskRepository.buildProgressFromLog(t.taskId)
+                } catch (_: Throwable) { "（暂无处理记录）" }
+                if (prog.isNotBlank()) {
+                    return "== 修复轨迹 ==\n（尚未进入修复阶段）\n\n" +
+                            "== 处理记录 ==\n" + prog
+                }
+            }
             if (out.isEmpty()) "（暂无修复轨迹）" else out
         } catch (err: Throwable) {
             LogStore.e(TAG, "buildTrace 异常: ${err.message}")
