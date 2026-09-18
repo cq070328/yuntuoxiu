@@ -216,6 +216,15 @@ class TaskDetailActivity : AppCompatActivity() {
                 if (!t.unpackAdvice.isNullOrBlank()) {
                     sb.append("  ${t.unpackAdvice}\n")
                 }
+                // ⭐ v2.4：重壳（需 SO 逆向/VM 还原）给出「外部 dex 导入」操作指引
+                if (t.unpackLevel == "NEED_SO" || t.unpackLevel == "NEED_VM") {
+                    val pkg = t.packageName ?: "<包名>"
+                    sb.append("\n  📥 建议操作：用专业脱壳工具（Layout Inspect / BlackDex）\n")
+                    sb.append("     脱出完整 dex 后，放入：\n")
+                    sb.append("     /sdcard/MT2/apks/external_dump/$pkg/\n")
+                    sb.append("     再重新一键脱修：将自动跳过设备端 dump，\n")
+                    sb.append("     直接进入【修复→删壳→换入口→打包→签名】。\n")
+                }
                 sb.append("\n")
             }
 
