@@ -61,7 +61,11 @@ object ShizukuClient {
             .daemon(false)
             .processNameSuffix("shizuku")
             .debuggable(false)
-            .version(1)
+            // ⭐ v1.8.9：UserService 版本号。Shizuku 用它判断「代码是否变化」：
+            //   若 version 不变，Shizuku 会**复用已在运行的旧 UserService 进程**，
+            //   导致 UserService 代码更新后**仍跑旧代码**（极难排查的坑！）。
+            //   ⚠️ 每次修改 YunTuoXiuUserService 逻辑，务必把此数字 +1。
+            .version(2)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {

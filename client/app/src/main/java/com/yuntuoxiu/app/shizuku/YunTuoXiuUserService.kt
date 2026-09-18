@@ -35,7 +35,8 @@ class YunTuoXiuUserService : IYunTuoXiuService.Stub {
 
     companion object {
         private const val TAG = "YunTuoXiuUserService"
-        const val VERSION = 1
+        // ⚠️ 与 ShizukuClient.userServiceArgs().version(N) 保持一致
+        const val VERSION = 2
     }
 
     /** 回调列表（线程安全） */

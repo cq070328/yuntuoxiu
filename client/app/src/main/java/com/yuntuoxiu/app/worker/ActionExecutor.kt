@@ -108,10 +108,16 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
         return if (code == ShizukuErrorCodes.OK) {
             ActionResponse(true, "副本已安装")
         } else {
-            ActionResponse(false, "安装失败: ${ShizukuErrorCodes.describe(code)}",
+            // ⭐ v1.8.9：失败时优先展示 UserService 回传的真实 detail/stderr 首行，
+            //   而非泛化的 describe(code)，便于定位（如签名冲突 / SELinux）。
+            val stderr = r.getString("stderr") ?: ""
+            val realDetail = r.getString("detail")?.takeIf { it.isNotBlank() }
+                ?: stderr.lineSequence().firstOrNull { it.isNotBlank() }?.take(300)
+                ?: ShizukuErrorCodes.describe(code)
+            ActionResponse(false, "安装失败: $realDetail",
                 mapOf("code" to code,
                     "fail_code" to (r.getString("fail_code") ?: "DUMP_INSTALL_FAIL"),
-                    "stderr" to (r.getString("stderr") ?: "")))
+                    "stderr" to stderr))
         }
     }
 
