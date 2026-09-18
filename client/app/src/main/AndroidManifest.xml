@@ -79,8 +79,7 @@
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <!-- ⭐ v1.8.3 关键修复：Shizuku UserService 必须在此声明！
-             ----------------------------------------------------------
-             根因：此前 Manifest 未声明本 Service，导致
+             注意：此前 Manifest 未声明本 Service，导致
                Shizuku.bindUserService() 找不到目标 → 无法用 shell uid 拉起
                → onServiceConnected 永不回调 → bound 永远 false
                → 所有 Shizuku 操作报 ERR_SERVICE_NOT_BOUND(-1003)
