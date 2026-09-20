@@ -52,6 +52,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                 ActionType.LOCAL_ALL -> onLocalAll(payload)
                 ActionType.LOCAL_ENGINE_CHECK -> onLocalEngineCheck(payload)
                 ActionType.LOCAL_PATCH -> onLocalPatch(payload)
+                ActionType.LOCAL_LOG_CAPTURE -> onLocalLogCapture(payload)
                 else -> ActionResponse(false, "未知 action: ${payload.action}")
             }
         } catch (e: Exception) {
@@ -121,6 +122,27 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                       "anti_debug_cleaned" to res.antiDebugCleaned))
         } else {
             ActionResponse(false, res.detail, mapOf("fail_code" to "PATCH_FAIL"))
+        }
+    }
+
+    /**
+     * 本地日志/崩溃捕获（logcat）。
+     * params: package?（过滤）、duration_ms?（默认5000）、clear?（默认false）
+     */
+    private fun onLocalLogCapture(payload: ActionPayload): ActionResponse {
+        val pkg = payload.params["package"] as? String
+        val dur = (payload.params["duration_ms"] as? Number)?.toLong() ?: 5000L
+        val clear = (payload.params["clear"] as? Boolean) ?: false
+
+        val res = com.yuntuoxiu.app.engine.LogCapture.capture(taskId, pkg, dur, clear)
+        return if (res.ok) {
+            ActionResponse(true, res.detail,
+                mapOf("file" to res.file?.absolutePath,
+                      "lines" to res.lineCount,
+                      "crash_found" to res.crashFound,
+                      "crash" to res.crashSnippet.take(2000)))
+        } else {
+            ActionResponse(false, res.detail, mapOf("fail_code" to "LOG_CAPTURE_FAIL"))
         }
     }
 

@@ -59,6 +59,8 @@ object ActionType {
     const val LOCAL_ENGINE_CHECK = "LOCAL_ENGINE_CHECK"
     /** 本地规则化修补（Manifest/反调试/壳串，正则替换） */
     const val LOCAL_PATCH = "LOCAL_PATCH"
+    /** 本地日志/崩溃捕获（logcat） */
+    const val LOCAL_LOG_CAPTURE = "LOCAL_LOG_CAPTURE"
 }
 
 /**

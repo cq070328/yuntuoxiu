@@ -503,6 +503,7 @@ class MainActivity : AppCompatActivity() {
                 Triple("📤", "本地脱壳", "App 内引擎脱 DEX（无需终端）"),
                 Triple("🔧", "本地修复", "清壳重组 + 签名（App 内）"),
                 Triple("🩹", "规则修补", "Manifest入口/反调试/壳串（本地）"),
+                Triple("📜", "日志诊断", "抓 logcat + 崩溃堆栈"),
                 Triple("📋", "环境自检", "检查 Shizuku / 本地引擎"),
                 Triple("ℹ️", "工具用法说明", "各功能说明")
             )
@@ -513,8 +514,9 @@ class MainActivity : AppCompatActivity() {
                 2 -> toolCollectDump()
                 3 -> toolCloudBuild()
                 4 -> toolSmaliPatch()
-                5 -> toolEnvCheck()
-                6 -> showToolsHelp()
+                5 -> toolLogCapture()
+                6 -> toolEnvCheck()
+                7 -> showToolsHelp()
             }
         }
     }
@@ -774,7 +776,72 @@ class MainActivity : AppCompatActivity() {
             showResultDialog(if (full) "全面修补" else "Manifest 修补", out)
         }
     }
-/** 工具 6：环境自检（v2.0 纯本地化） */
+/** 工具 6：日志诊断（抓 logcat + 崩溃堆栈，借鉴「崩溃日志抓包神器」） */
+    private fun toolLogCapture() {
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
+            }
+            if (tasks.isEmpty()) {
+                Toast.makeText(this@MainActivity, "暂无任务", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = tasks.map { it.displayName }.toTypedArray()
+            showItemsDialog(
+                "日志诊断 · 选择任务",
+                names.map { Triple("", it, "") }
+            ) { which ->
+                val t = tasks[which]
+                showItemsDialog(
+                    "抓取选项",
+                    listOf(
+                        Triple("⚡", "快速（3秒，仅崩溃）", "清缓冲后抓取"),
+                        Triple("📜", "完整（5秒，全量）", "保留全部 logcat")
+                    )
+                ) { mode ->
+                    logCaptureRun(t, quick = mode == 0)
+                }
+            }
+        }
+    }
+
+    private fun logCaptureRun(task: TaskMetaView, quick: Boolean) {
+        lifecycleScope.launch {
+            Toast.makeText(this@MainActivity, "抓取日志中…", Toast.LENGTH_SHORT).show()
+            val out = withContext(Dispatchers.IO) {
+                try {
+                    val pkg = task.lookupPackage
+                    val res = if (quick) {
+                        val r = com.yuntuoxiu.app.engine.LogCapture.capture(
+                            task.taskId, pkg, 3000, clearFirst = true)
+                        r
+                    } else {
+                        com.yuntuoxiu.app.engine.LogCapture.capture(
+                            task.taskId, pkg, 5000, clearFirst = false)
+                    }
+                    if (!res.ok) {
+                        "❌ ${res.detail}"
+                    } else {
+                        buildString {
+                            append("✅ ${res.detail}\n")
+                            append("文件: ${res.file?.absolutePath}\n\n")
+                            if (res.crashFound) {
+                                append("⚠️ 检测到崩溃:\n")
+                                append(res.crashSnippet.take(3000))
+                            } else {
+                                append("未检测到崩溃堆栈。")
+                            }
+                        }
+                    }
+                } catch (e: Throwable) {
+                    "❌ 抓取失败: ${e.message}"
+                }
+            }
+            showResultDialog("日志诊断", out)
+        }
+    }
+
+    /** 工具 7：环境自检（v2.0 纯本地化） */
     private fun toolEnvCheck() {
         lifecycleScope.launch {
             val rep = withContext(Dispatchers.IO) {
