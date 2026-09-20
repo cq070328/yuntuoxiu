@@ -30,7 +30,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/android-sdk
-          key: android-sdk-34-v3
+          key: android-sdk-34-v4
 
       # ⚡ Gradle 设置（v3 已验证可用，自带缓存）
       - name: 设置 Gradle
