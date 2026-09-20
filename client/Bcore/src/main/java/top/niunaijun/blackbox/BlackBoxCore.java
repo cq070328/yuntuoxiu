@@ -247,11 +247,69 @@ public class BlackBoxCore extends ClientConfiguration {
 
     @Override
     public String getHostPackageName() {
+        if (mClientConfiguration == null) {
+            // ⭐ v2.0：:black 进程 Provider 先于 Application.onCreate，
+            //   ClientConfiguration 可能尚未设置 → 用 sContext 兜底
+            Context ctx = sContext;
+            if (ctx != null) return ctx.getPackageName();
+            return "";
+        }
         return mClientConfiguration.getHostPackageName();
+    }
+
+    /**
+     * ⭐ v2.0：供 :black 服务进程的 SystemCallProvider 使用。
+     *   只设置 sContext / mClientConfiguration，并把进程标记为 Server。
+     *   ⚠️ 不跑 Reflection.unseal / HookManager.init（避免与 :black 的 startup 冲突）
+     */
+    public void setContextForServer(Context context, ClientConfiguration clientConfiguration) {
+        sContext = context;
+        mClientConfiguration = clientConfiguration;
+        if (mClientConfiguration != null) {
+            mClientConfiguration.init();
+        }
+        mProcessType = ProcessType.Server;
+    }
+
+    /**
+     * ⭐ v2.0：生成默认 ClientConfiguration（供 SystemCallProvider 兜底初始化用）。
+     */
+    public static ClientConfiguration getDefaultClientConfiguration(final Context ctx) {
+        return new ClientConfiguration() {
+            @Override
+            public String getHostPackageName() {
+                return ctx.getPackageName();
+            }
+
+            @Override
+            public String getDexDumpDir() {
+                File d = new File(ctx.getCacheDir(), "dump");
+                if (!d.exists()) d.mkdirs();
+                return d.getAbsolutePath();
+            }
+
+            @Override
+            public boolean isFixCodeItem() { return false; }
+            @Override
+            public boolean isEnableHookDump() { return true; }
+            @Override
+            public boolean isAutoCallMethod() { return true; }
+            @Override
+            public boolean isVerifyDex() { return true; }
+        };
     }
 
     @Override
     public String getDexDumpDir() {
+        if (mClientConfiguration == null) {
+            Context ctx = sContext;
+            if (ctx != null) {
+                File d = new File(ctx.getCacheDir(), "dump");
+                if (!d.exists()) d.mkdirs();
+                return d.getAbsolutePath();
+            }
+            return "/data/local/tmp/blackbox_dump";
+        }
         return mClientConfiguration.getDexDumpDir();
     }
 

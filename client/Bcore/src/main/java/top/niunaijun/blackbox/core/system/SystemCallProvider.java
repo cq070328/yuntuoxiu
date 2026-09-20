@@ -26,6 +26,21 @@ public class SystemCallProvider extends ContentProvider {
     }
 
     private boolean initSystem() {
+        // ⭐ v2.0 关键修复：:black 进程的 Provider 先于 Application.onCreate 执行，
+        //   此时 BlackBoxCore 的 sContext / mClientConfiguration 都是 null
+        //   → BlackBoxSystem.startup() 里 getHostPkg() 会 NPE → :black 崩溃。
+        //   这里用 ContentProvider 自带的 Context 直接设置 sContext（不跑 HookManager，
+        //   避免在 :black 进程重复 hook）。
+        try {
+            android.content.Context ctx = getContext();
+            if (ctx != null) {
+                top.niunaijun.blackbox.BlackBoxCore.get()
+                        .setContextForServer(ctx,
+                                top.niunaijun.blackbox.BlackBoxCore.getDefaultClientConfiguration(ctx));
+            }
+        } catch (Throwable t) {
+            android.util.Log.e("SystemCallProvider", "BlackBoxCore 兜底初始化失败", t);
+        }
         BlackBoxSystem.getSystem().startup();
         return true;
     }
