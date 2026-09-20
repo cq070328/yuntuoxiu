@@ -211,11 +211,27 @@ object LocalUnpackEngine {
         }
     }
 
-    /** 引擎根 dump 目录 */
+    /** 引擎根 dump 目录（同时写入 .nomedia 阻止媒体扫描） */
     fun getDumpDir(): File {
         val dir = File(YunTuoXiuApp.CLOUD_ROOT, "dump")
         if (!dir.exists()) dir.mkdirs()
+        // ⭐ v2.0：阻止媒体库扫描（dump 的 dex/资源不会被相册收录）
+        ensureNoMedia(dir)
         return dir
+    }
+
+    /** 在目录（及其父链）放置 .nomedia，阻止媒体扫描 */
+    fun ensureNoMedia(dir: File) {
+        try {
+            var d: File? = dir
+            var depth = 0
+            while (d != null && depth < 5) {
+                val nm = File(d, ".nomedia")
+                if (!nm.exists()) nm.createNewFile()
+                d = d.parentFile
+                depth++
+            }
+        } catch (_: Throwable) {}
     }
 
     /** 收集目录下所有 *.dex（递归） */

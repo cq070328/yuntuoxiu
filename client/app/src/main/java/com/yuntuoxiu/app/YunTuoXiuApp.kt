@@ -129,6 +129,12 @@ class YunTuoXiuApp : Application() {
             LogStore.w("YunTuoXiuApp", "迁移失败: ${t.message}")
         }
         try {
+            // ⭐ v2.0：确保工作区/云脱修目录有 .nomedia（阻止相册扫描到解包资源图片）
+            ensureNoMediaDirs()
+        } catch (t: Throwable) {
+            LogStore.w("YunTuoXiuApp", ".nomedia 创建失败: ${t.message}")
+        }
+        try {
             // 1. 本地脱壳引擎（loadLibrary + BlackBox 初始化，最耗时）
             initUnpackEngine()
         } catch (t: Throwable) {
@@ -237,6 +243,26 @@ class YunTuoXiuApp : Application() {
             com.yuntuoxiu.app.engine.LocalUnpackEngine.markReady(false, t.message)
             LogStore.e("YunTuoXiuApp",
                 "本地脱壳引擎初始化异常: ${t.message}\n${t.stackTraceToString().take(800)}")
+        }
+    }
+
+    /** ⭐ v2.0：确保工作区相关目录都有 .nomedia，阻止系统相册/媒体库扫描 */
+    private fun ensureNoMediaDirs() {
+        val dirs = listOf(
+            WORKSPACE_ROOT,              // /storage/emulated/0/MT2/apks （整体）
+            CLOUD_ROOT,                  // /unpackcloud
+            "$CLOUD_ROOT/dump",
+            "$CLOUD_ROOT/tasks",
+            "$CLOUD_ROOT/uploads",
+            TOOLS_DIR,                   // /ytx-tools
+        )
+        for (p in dirs) {
+            try {
+                val d = java.io.File(p)
+                if (!d.exists()) d.mkdirs()
+                val nm = java.io.File(d, ".nomedia")
+                if (!nm.exists()) nm.createNewFile()
+            } catch (_: Throwable) {}
         }
     }
 
