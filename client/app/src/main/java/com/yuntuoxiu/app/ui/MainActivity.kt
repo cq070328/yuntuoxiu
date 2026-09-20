@@ -211,6 +211,15 @@ class MainActivity : AppCompatActivity() {
         if (hasFocus && !permissionRequested) {
             permissionRequested = true
             try { requestPermissionsIfNeeded() } catch (_: Throwable) {}
+
+            // ⭐ v2.0.1：进入时若没有「所有文件访问权限」→ 直接跳转授权页
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                    !Environment.isExternalStorageManager()) {
+                    LogStore.i(TAG, "缺少「所有文件访问权限」，跳转授权页")
+                    openAllFilesAccessSettings()
+                }
+            } catch (_: Throwable) {}
         }
     }
 

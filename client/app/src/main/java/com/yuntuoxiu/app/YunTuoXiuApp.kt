@@ -107,48 +107,73 @@ class YunTuoXiuApp : Application() {
 
     /**
      * ⭐ v2.0 兜底：把 uploads/ 里遗留的 create_*.req.json 转成本地任务。
-     *    （旧版只写请求不建任务；新版本地直接建任务）
+     *
+     * ⚠️ v2.0.1 修复「已删除任务重进又恢复」：
+     *   之前每次启动都会把 uploads/ 里的 create 请求重新转成任务，
+     *   用户删了任务但 create 请求还在 → 下次启动又建出来。
+     *   现在改为：
+     *     1) 迁移后**删除** create 请求（原逻辑已有）
+     *     2) 新增：迁移完成后，把整个 uploads/ 里的 create 请求全部清掉
+     *        （避免任何残留导致重复建任务）
+     *     3) 用 uploads/.migrated 标记，**只迁移一次**
      */
     private fun migratePendingRequests() {
         try {
             val uploads = java.io.File(CLOUD_ROOT, "uploads")
             if (!uploads.isDirectory) return
+
+            // ⭐ 只迁移一次：有 .migrated 标记就跳过
+            val marker = java.io.File(uploads, ".migrated")
+            // 不再自动迁移（用户删任务后不应复活）
+            // 仅当标记不存在时，执行一次历史请求迁移
+            if (marker.exists()) return
+
             val tasks = java.io.File(CLOUD_ROOT, "tasks")
             val logs = java.io.File(CLOUD_ROOT, "logs")
             val reqs = uploads.listFiles { f -> f.name.startsWith("create_") && f.name.endsWith(".req.json") }
-                ?: return
-            if (reqs.isEmpty()) return
+                ?: emptyArray()
 
-            val gson = com.google.gson.Gson()
-            for (req in reqs) {
-                try {
-                    val o = com.google.gson.JsonParser.parseString(req.readText()).asJsonObject
-                    val apkPath = o.get("apk_path")?.asString ?: continue
-                    val pkg = o.get("package")?.asString
-                    val apk = java.io.File(apkPath)
-                    if (!apk.isFile) continue
+            if (reqs.isNotEmpty()) {
+                val gson = com.google.gson.Gson()
+                for (req in reqs) {
+                    try {
+                        val o = com.google.gson.JsonParser.parseString(req.readText()).asJsonObject
+                        val apkPath = o.get("apk_path")?.asString ?: continue
+                        val pkg = o.get("package")?.asString
+                        val apk = java.io.File(apkPath)
+                        if (!apk.isFile) {
+                            // APK 不存在 → 直接删请求（避免反复）
+                            req.delete()
+                            continue
+                        }
 
-                    val taskId = "t_" + System.currentTimeMillis().toString(36) +
-                            "_" + java.util.UUID.randomUUID().toString().substring(0, 6)
-                    val now = System.currentTimeMillis()
-                    val taskDir = java.io.File(tasks, taskId); taskDir.mkdirs()
-                    java.io.File(taskDir, "meta").mkdirs()
-                    java.io.File(taskDir, "dump").mkdirs()
-                    java.io.File(taskDir, "build").mkdirs()
-                    java.io.File(logs, taskId).mkdirs()
+                        val taskId = "t_" + System.currentTimeMillis().toString(36) +
+                                "_" + java.util.UUID.randomUUID().toString().substring(0, 6)
+                        val now = System.currentTimeMillis()
+                        val taskDir = java.io.File(tasks, taskId); taskDir.mkdirs()
+                        java.io.File(taskDir, "meta").mkdirs()
+                        java.io.File(taskDir, "dump").mkdirs()
+                        java.io.File(taskDir, "build").mkdirs()
+                        java.io.File(logs, taskId).mkdirs()
 
-                    val meta = com.yuntuoxiu.app.data.TaskMetaView(
-                        taskId = taskId, state = "CREATED", sourceApk = apkPath,
-                        packageName = pkg, createdAt = now, updatedAt = now
-                    )
-                    java.io.File(taskDir, "meta/task_meta.json").writeText(gson.toJson(meta))
-                    java.io.File(logs, "$taskId/task.log").writeText("")
-                    LogStore.i("YunTuoXiuApp", "已迁移遗留请求 → 任务 $taskId ($apkPath)")
-                    req.delete()
-                } catch (t: Throwable) {
-                    LogStore.w("YunTuoXiuApp", "迁移请求失败: ${t.message}")
+                        val meta = com.yuntuoxiu.app.data.TaskMetaView(
+                            taskId = taskId, state = "CREATED", sourceApk = apkPath,
+                            packageName = pkg, createdAt = now, updatedAt = now
+                        )
+                        java.io.File(taskDir, "meta/task_meta.json").writeText(gson.toJson(meta))
+                        java.io.File(logs, "$taskId/task.log").writeText("")
+                        LogStore.i("YunTuoXiuApp", "已迁移遗留请求 → 任务 $taskId ($apkPath)")
+                        req.delete()
+                    } catch (t: Throwable) {
+                        LogStore.w("YunTuoXiuApp", "迁移请求失败: ${t.message}")
+                        try { req.delete() } catch (_: Throwable) {}
+                    }
                 }
             }
+
+            // ⭐ 写标记：以后不再迁移
+            try { marker.createNewFile() } catch (_: Throwable) {}
+            LogStore.i("YunTuoXiuApp", "遗留请求迁移完成，已写 .migrated 标记")
         } catch (t: Throwable) {
             LogStore.w("YunTuoXiuApp", "migratePendingRequests 异常: ${t.message}")
         }

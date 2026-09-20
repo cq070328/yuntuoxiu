@@ -177,18 +177,24 @@ object LocalUnpackEngine {
         running = true
         try {
             onProgress("启动本地脱壳引擎(文件): ${apkFile.name}")
+            LogStore.i(TAG, "dumpFile: 开始, apk=${apkFile.absolutePath} size=${apkFile.length()}")
             val core = top.niunaijun.blackbox.BlackDexCore.get()
+
+            LogStore.i(TAG, "dumpFile: 调用 dumpDex...")
             val result = core.dumpDex(apkFile)
+            LogStore.i(TAG, "dumpFile: dumpDex 返回 ${if (result == null) "null" else "ok pkg=${result.packageName}"}")
             if (result == null) {
                 onProgress("脱壳启动失败（沙箱安装或拉起失败）")
                 return emptyList()
             }
             onProgress("沙箱已拉起，等待 DEX 落盘...")
 
+            // ⭐ v2.0.1：沙箱启动较慢，等待时间延长到 180s，并每 10s 打印进度
             val dumpDir = File(getDumpDir(), result.packageName)
-            val deadline = System.currentTimeMillis() + 120_000
+            val deadline = System.currentTimeMillis() + 180_000
             var stable = 0
             var lastCount = -1
+            var tick = 0
             while (System.currentTimeMillis() < deadline) {
                 val n = collectDex(dumpDir).size
                 if (n > 0 && n == lastCount) {
@@ -196,9 +202,14 @@ object LocalUnpackEngine {
                     if (stable >= 3) break
                 } else stable = 0
                 lastCount = n
+                tick++
+                if (tick % 7 == 0) {
+                    LogStore.i(TAG, "dumpFile: 等待中... 已有 $n 个 dex (dir=${dumpDir.absolutePath})")
+                }
                 Thread.sleep(1500)
             }
             val dexes = collectDex(dumpDir)
+            LogStore.i(TAG, "dumpFile: 完成, 产出 ${dexes.size} 个 dex")
             onProgress("脱壳完成: ${dexes.size} 个 dex")
             return dexes
         } catch (t: Throwable) {
