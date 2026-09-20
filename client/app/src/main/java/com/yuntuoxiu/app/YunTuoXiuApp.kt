@@ -61,14 +61,48 @@ class YunTuoXiuApp : Application() {
         super.onCreate()
         instance = this
 
-        // ⚡ v2.0 启动优化：主线程只做「零成本」的事，重活全部丢后台线程。
-        //    （否则 loadLibrary/doCreate/Shizuku.init 会阻塞主线程 → 白屏/黑屏）
+        // ⭐ v2.0 关键：区分进程！
+        //   · 主进程：完整初始化（引擎/Shizuku/Worker）
+        //   · 子进程(:black/:p0...)：**必须** setContext（否则 BlackBox 静态初始化 NPE），
+        //     但**不能**重复 loadLibrary/doCreate/HookManager.init（会崩）
+        val proc = currentProcessName()
+        if (proc != null && proc.contains(":")) {
+            LogStore.i("YunTuoXiuApp", "子进程($proc) onCreate：仅设置 BlackBox 上下文")
+            try {
+                initBlackBoxContextOnly()
+            } catch (t: Throwable) {
+                LogStore.e("YunTuoXiuApp", "子进程上下文初始化失败: ${t.message}")
+            }
+            return
+        }
 
-        // 后台线程：引擎初始化 + 自检 + Shizuku + Worker
+        // ⚡ 主进程：启动优化，重活全部丢后台线程
         Thread(::initInBackground, "ytx-init").apply {
             priority = Thread.MIN_PRIORITY
             isDaemon = true
         }.start()
+    }
+
+    /**
+     * 子进程用：只设置 BlackBox 的 Context/ClientConfiguration。
+     *   ⚠️ 不加载 native、不 doCreate、不 HookManager.init
+     *      （这些会与 :black 的 BlackBoxSystem.startup() 冲突）
+     */
+    private fun initBlackBoxContextOnly() {
+        val cfg = object : top.niunaijun.blackbox.app.configuration.ClientConfiguration() {
+            override fun getHostPackageName(): String = packageName
+            override fun getDexDumpDir(): String {
+                val dir = java.io.File(WORKSPACE_ROOT, "unpackcloud/dump")
+                dir.mkdirs()
+                return dir.absolutePath
+            }
+            override fun isFixCodeItem(): Boolean = false
+            override fun isEnableHookDump(): Boolean = true
+            override fun isAutoCallMethod(): Boolean = true
+            override fun isVerifyDex(): Boolean = true
+        }
+        // 只设置上下文（内部会 mClientConfiguration.init()）
+        top.niunaijun.blackbox.BlackDexCore.get().doAttachBaseContext(this, cfg)
     }
 
     /**
