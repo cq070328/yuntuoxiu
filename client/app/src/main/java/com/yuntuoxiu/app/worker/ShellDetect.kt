@@ -153,26 +153,51 @@ object ShellDetect {
                     }
                 }
 
-                // 2b) ⭐ v2.0：扩展特征库（47 厂商样本库）
-                //     逐个厂商匹配 so 名 + assets 名（精确名匹配，权重 0.85）
+                // 2b) ⭐ v2.0：扩展特征库（47 厂商，全维度：so + assets + lib）
+                //     命中任一 → 判定该厂商（权重 0.85）
+                val matchedVendors = ArrayList<String>()
                 for (v in ShellSignatures.VENDORS) {
                     var hitName: String? = null
+
+                    // 2b-1: so 名（lib/<abi>/xxx.so）
                     for (so in v.soNames) {
-                        if (entries.any { it.substringAfterLast('/') == so }) {
+                        if (entries.any {
+                                val n = it.substringAfterLast('/')
+                                n.equals(so, ignoreCase = true)
+                            }) {
                             hitName = so; break
                         }
                     }
+                    // 2b-2: lib 目录名（含 .a / .so）
+                    if (hitName == null) {
+                        for (ln in v.libNames) {
+                            if (entries.any {
+                                    val n = it.substringAfterLast('/')
+                                    n.equals(ln, ignoreCase = true)
+                                }) {
+                                hitName = ln; break
+                            }
+                        }
+                    }
+                    // 2b-3: assets 名
                     if (hitName == null) {
                         for (a in v.assetNames) {
-                            if (entries.any { it.substringAfterLast('/') == a ||
-                                    it.equals("assets/$a", true) }) {
+                            if (entries.any {
+                                    val n = it.substringAfterLast('/')
+                                    n.equals(a, ignoreCase = true) ||
+                                            it.equals("assets/$a", true)
+                                }) {
                                 hitName = a; break
                             }
                         }
                     }
                     if (hitName != null) {
+                        matchedVendors.add("${v.vendor}($hitName)")
                         bump(v.tag, 0.85, "${v.vendor} 特征: $hitName")
                     }
+                }
+                if (matchedVendors.isNotEmpty()) {
+                    reasons.add("命中厂商: " + matchedVendors.joinToString(", "))
                 }
 
                 // 2c) ⭐ v2.0：厂商策略表的模糊匹配（so 名前缀/子串）
