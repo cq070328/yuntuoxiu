@@ -115,6 +115,28 @@ public class IOCore {
                         new File(external.getAbsolutePath(), "files").getAbsolutePath());
                 rule.put("/storage/emulated/0/Android/data/" + packageName + "/cache",
                         new File(external.getAbsolutePath(), "cache").getAbsolutePath());
+
+                // ⭐ v2.0 修复：公共媒体目录重定向
+                //   问题：沙箱内目标 App 写 /sdcard/Pictures、/sdcard/DCIM 等公共目录时，
+                //        原代码未重定向 → 资源图片真实落到公共目录，被系统相册扫描到。
+                //   修复：把这些公共目录一并重定向到沙箱私有目录（external 下）。
+                File mediaBase = new File(external.getAbsolutePath(), "media");
+                if (!mediaBase.exists()) FileUtils.mkdirs(mediaBase.getAbsolutePath());
+
+                String[] publicDirs = new String[]{
+                        "Pictures", "DCIM", "Download", "Downloads", "Movies",
+                        "Music", "Documents", "Android/media", "Alarms",
+                        "Notifications", "Ringtones", "Podcasts"
+                };
+                for (String dir : publicDirs) {
+                    String redirected = new File(mediaBase, dir.replace('/', '_')).getAbsolutePath();
+                    rule.put("/sdcard/" + dir, redirected);
+                    rule.put("/storage/emulated/0/" + dir, redirected);
+                    rule.put("/storage/self/primary/" + dir, redirected);
+                    // 大小写变体
+                    rule.put("/sdcard/" + dir.toLowerCase(), redirected);
+                    rule.put("/storage/emulated/0/" + dir.toLowerCase(), redirected);
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();

@@ -279,7 +279,13 @@ public class BlackBoxCore extends ClientConfiguration {
     }
 
     private void startLogcat() {
-        File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), getContext().getPackageName() + "_logcat.txt");
+        // ⭐ v2.0：不再写 /sdcard/Download（污染公共目录/相册）
+        //    改为写 App 私有目录（cache 下），避免被媒体扫描
+        File logDir = new File(getContext().getCacheDir(), "logcat");
+        if (!logDir.exists()) {
+            logDir.mkdirs();
+        }
+        File file = new File(logDir, getContext().getPackageName() + "_logcat.txt");
         FileUtils.deleteDir(file);
         ShellUtils.execCommand("logcat -c", false);
         ShellUtils.execCommand("logcat >> " + file.getAbsolutePath() + " &", false);
