@@ -209,16 +209,17 @@ object TaskRepository {
             File(taskDir, "build").mkdirs()
             File(logsRoot, taskId).mkdirs()
 
-            // ⭐ v2.0：创建任务时同步做壳识别（写入 shellTag/shellConfidence）
+            // ⭐ v2.0：创建任务时同步做壳识别（写入 shellTag = 真实厂商名）
             var shellTag: String? = null
             var shellConf: Double? = null
             var shellReasons: List<String> = emptyList()
             try {
                 val v = com.yuntuoxiu.app.worker.ShellDetect.detect(finalApk.absolutePath)
-                shellTag = v.tag
+                // ⭐ 显示真实厂商名（如 "360加固" / "腾讯御安全"），无则用 tag
+                shellTag = v.vendor ?: v.tag
                 shellConf = v.confidence
                 shellReasons = v.reasons
-                Log.i(TAG, "壳识别: ${v.tag} (${"%.2f".format(v.confidence)})")
+                Log.i(TAG, "壳识别: ${v.tag} / ${v.vendor} (${"%.2f".format(v.confidence)})")
             } catch (t: Throwable) {
                 Log.w(TAG, "壳识别失败: ${t.message}")
             }

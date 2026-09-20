@@ -21,10 +21,27 @@ object ShellDetect {
 
     data class Verdict(
         val tag: String,             // 主标签（如 NP / METASEC / NONE）
+        val vendor: String?,         // ⭐ 真实厂商名（如 "360加固" / "腾讯御安全"）
         val confidence: Double,      // 0..1
         val tagsAll: List<String>,   // 全部命中标签
         val reasons: List<String>,   // 依据
         val dexCount: Int
+    )
+
+    /** ⭐ 内部 tag → 中文壳名（未命中厂商特征时的兜底显示） */
+    private val TAG_LABEL = mapOf(
+        "OVERALL_SHELL" -> "整体加固",
+        "EXTRACT_SHELL" -> "抽取壳",
+        "VMP" -> "VMP虚拟化",
+        "DEX_VM" -> "Dex-VM",
+        "DEX2C" -> "Dex2C",
+        "METASEC" -> "字节加固",
+        "SECSHELL" -> "腾讯御安全",
+        "NP" -> "NP加固",
+        "HEADER_ERASED" -> "Header擦除",
+        "CLOUD_INJECT" -> "云注入",
+        "NONE" -> "未加壳",
+        "UNKNOWN" -> "未知",
     )
 
     // ---- 特征 so（正则, 标签, 说明, 权重）----
@@ -156,6 +173,7 @@ object ShellDetect {
                 // 2b) ⭐ v2.0：扩展特征库（47 厂商，全维度：so + assets + lib）
                 //     命中任一 → 判定该厂商（权重 0.85）
                 val matchedVendors = ArrayList<String>()
+                var matchedVendorName: String? = null
                 for (v in ShellSignatures.VENDORS) {
                     var hitName: String? = null
 
@@ -193,6 +211,7 @@ object ShellDetect {
                     }
                     if (hitName != null) {
                         matchedVendors.add("${v.vendor}($hitName)")
+                        if (matchedVendorName == null) matchedVendorName = v.vendor
                         bump(v.tag, 0.85, "${v.vendor} 特征: $hitName")
                     }
                 }
@@ -210,6 +229,7 @@ object ShellDetect {
                                 val n = it.substringAfterLast('/').lowercase()
                                 n.endsWith(".so") && n.contains(p)
                             }) {
+                            if (matchedVendorName == null) matchedVendorName = st.vendor
                             bump(st.tag, 0.70, "${st.vendor} 模糊特征: $pat")
                             break
                         }
@@ -305,13 +325,13 @@ object ShellDetect {
             }
         } catch (t: Throwable) {
             LogStore.e(TAG, "解析 APK 失败: ${t.message}")
-            return Verdict("UNKNOWN", 0.0, listOf("UNKNOWN"),
+            return Verdict("UNKNOWN", "未知", 0.0, listOf("UNKNOWN"),
                 listOf("APK 解析失败: ${t.message}"), 0)
         }
 
         // 4) 选定主标签
         if (scores.isEmpty()) {
-            return Verdict("NONE", 0.5, listOf("NONE"),
+            return Verdict("NONE", "未加壳", 0.5, listOf("NONE"),
                 listOf("未命中任何加固特征，判定未加壳"), dexCount)
         }
 
@@ -324,8 +344,10 @@ object ShellDetect {
             reasons.add("复合判定: NP + Dex2C（主标签 NP）")
         }
 
-        LogStore.i(TAG, "壳识别: $bestTag (${"%.2f".format(bestConf)}) dex=$dexCount")
-        return Verdict(bestTag, bestConf, tagsAll, reasons, dexCount)
+        // ⭐ 真实厂商名：优先用厂商特征命中的 vendor，否则用 tag 中文名兜底
+        val vendor = matchedVendorName ?: TAG_LABEL[bestTag] ?: bestTag
+        LogStore.i(TAG, "壳识别: $bestTag / $vendor (${"%.2f".format(bestConf)}) dex=$dexCount")
+        return Verdict(bestTag, vendor, bestConf, tagsAll, reasons, dexCount)
     }
 
     /**

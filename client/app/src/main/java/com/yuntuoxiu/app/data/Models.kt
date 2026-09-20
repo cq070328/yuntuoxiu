@@ -156,9 +156,9 @@ data class TaskMetaView(
     /** 显示名（优先应用名/包名，回退文件名） */
     val displayName: String
         get() = sourceApk.substringAfterLast('/').ifBlank { taskId }
-
-    val shellLabel: String
+val shellLabel: String
         get() = when (shellTag) {
+            null -> "未识别"
             "NONE" -> "未加壳"
             "OVERALL_SHELL" -> "整体壳(一代)"
             "EXTRACT_SHELL" -> "抽取壳(二代)"
@@ -171,8 +171,9 @@ data class TaskMetaView(
             "SECSHELL" -> "腾讯御安全"   // ⭐ v1.8.4 补齐
             "CLOUD_INJECT" -> "云注入"
             "UNKNOWN" -> "未知"
-            null -> "未识别"
+            // ⭐ v2.0：其它情况直接显示（含真实厂商名，如 "360加固" / "腾讯御安全"）
             else -> shellTag
+
         }
 
     /** ⭐ v2.0：可脱性等级中文标签 */
