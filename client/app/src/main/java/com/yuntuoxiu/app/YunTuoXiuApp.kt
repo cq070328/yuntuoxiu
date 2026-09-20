@@ -224,7 +224,9 @@ class YunTuoXiuApp : Application() {
                 createOk = true
                 LogStore.i("YunTuoXiuApp", "doCreate OK")
             } catch (t: Throwable) {
-                LogStore.w("YunTuoXiuApp", "doCreate 失败(可忽略): ${t.message}")
+                LogStore.w("YunTuoXiuApp",
+                    "doCreate 失败: ${t.javaClass.name}: ${t.message}\n" +
+                    t.stackTraceToString().take(1500))
             }
 
             // native 可加载 = 引擎可用；attach/create 失败仅告警

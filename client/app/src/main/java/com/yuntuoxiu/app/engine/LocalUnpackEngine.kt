@@ -202,8 +202,9 @@ object LocalUnpackEngine {
             onProgress("脱壳完成: ${dexes.size} 个 dex")
             return dexes
         } catch (t: Throwable) {
-            LogStore.e(TAG, "脱壳(文件)失败: ${t.message}")
-            onProgress("脱壳异常: ${t.message}")
+            LogStore.e(TAG, "脱壳(文件)失败: ${t.javaClass.name}: ${t.message}\n" +
+                    t.stackTraceToString().take(1500))
+            onProgress("脱壳异常: ${t.javaClass.simpleName}: ${t.message}")
             return emptyList()
         } finally {
             running = false

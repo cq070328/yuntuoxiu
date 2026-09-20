@@ -1235,14 +1235,9 @@ class MainActivity : AppCompatActivity() {
             }
             when (r) {
                 is SubmitResult.Success -> {
-                    LogStore.i(TAG, "已提交: $label ($pkg)")
-                    Toast.makeText(this@MainActivity, "✅ 已提交：$label（后端建任务中…）", Toast.LENGTH_LONG).show()
-                    // ⭐ v1.9.3：立即刷 + 3s/6s 后再刷（等后端 watcher 建出 t_* 任务）
+                    LogStore.i(TAG, "已本地创建任务: $label ($pkg)")
+                    Toast.makeText(this@MainActivity, "✅ 任务已创建：$label", Toast.LENGTH_SHORT).show()
                     refreshTasks()
-                    lifecycleScope.launch {
-                        delay(3000); refreshTasks()
-                        delay(3000); refreshTasks()
-                    }
                 }
                 is SubmitResult.Failure -> {
                     LogStore.e(TAG, "提交失败: ${r.reason}")
@@ -1271,7 +1266,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 when (r) {
                     is SubmitResult.Success -> {
-                        Toast.makeText(this@MainActivity, "任务已提交", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "✅ 任务已创建", Toast.LENGTH_SHORT).show()
                         refreshTasks()
                     }
                     is SubmitResult.Failure ->
