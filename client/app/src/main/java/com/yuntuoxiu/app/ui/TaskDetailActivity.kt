@@ -234,7 +234,7 @@ class TaskDetailActivity : AppCompatActivity() {
                 sb.append("ℹ️ 本地待处理任务（骨架）\n")
                 sb.append("   尚未被后端接管，暂无修复轨迹。\n\n")
                 sb.append("可能原因：\n")
-                sb.append("· 后端未运行 → 在 Operit 终端执行 ytx.sh start\n")
+                sb.append("· 全本地化：脱壳/修复/签名均在 App 内完成\n")
                 sb.append("· 后端已运行但还没轮到（等几秒刷新）\n\n")
             }
 

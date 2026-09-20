@@ -53,8 +53,8 @@ class YunTuoXiuApp : Application() {
         /** NPatch 素材（metaloader 作为存在性标志） */
         const val NPATCH_ASSETS = "$TOOLS_DIR/npatch_assets/assets/lspatch/metaloader.dex"
 
-        /** 启动命令（给用户的提示） */
-        const val START_CMD = "bash $WORKSPACE_ROOT/ytx.sh start"
+        /** 启动命令（v2.0 已废弃——全本地化） */
+        const val START_CMD = "(v2.0 无需启动后端)"
     }
 
     override fun onCreate() {
@@ -88,23 +88,16 @@ class YunTuoXiuApp : Application() {
             LogStore.e("YunTuoXiuApp", "自动启动 Worker 失败: ${t.message}")
         }
 
-        // 【v1.6.1】本地引擎自检（在后台线程，不阻塞启动）
-        // ⚠️ 已移除 Termux 自动探测（Termux 现为「可选后端」，
-        //    不再在启动时触发，避免无用日志 + 延迟）
+        // 【v2.0】本地引擎自检（在后台线程，不阻塞启动）
+        // ⚠️ 已移除对 NPatch/脱壳模块/注入器 的检查（v2.0 全本地化，不再需要）
         Thread {
             try {
-                val ws = WORKSPACE_ROOT
-                val checks = listOf(
-                    "NPatch素材" to "$ws/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex",
-                    "脱壳模块" to "$ws/ytx-tools/ytxdump-module.apk",
-                    "注入器" to "$ws/ytx_npatch_inject.sh"
-                )
-                val missing = checks.filter { !java.io.File(it.second).exists() }
-                if (missing.isEmpty()) {
-                    LogStore.i("YunTuoXiuApp", "✅ 本地引擎就绪（可全自动脱壳）")
+                val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(this)
+                if (chk.available) {
+                    LogStore.i("YunTuoXiuApp", "✅ 本地引擎可用（${chk.abi}）")
                 } else {
                     LogStore.w("YunTuoXiuApp",
-                        "本地引擎缺: ${missing.joinToString("/") { it.first }}")
+                        "本地引擎问题: ${chk.problems.joinToString("; ")}")
                 }
             } catch (t: Throwable) {
                 LogStore.e("YunTuoXiuApp", "本地引擎自检失败: ${t.message}")
@@ -126,11 +119,20 @@ class YunTuoXiuApp : Application() {
      */
     private fun initUnpackEngine() {
         try {
+            // 先做可用性自检（native so / ABI）
+            val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(this)
+            if (!chk.available) {
+                com.yuntuoxiu.app.engine.LocalUnpackEngine.markReady(
+                    false, chk.problems.joinToString("; "))
+                LogStore.w("YunTuoXiuApp", "本地脱壳引擎不可用: ${chk.problems.joinToString("; ")}")
+                return
+            }
+
             val clientConfig = object : top.niunaijun.blackbox.app.configuration.ClientConfiguration() {
                 override fun getHostPackageName(): String = packageName
 
                 override fun getDexDumpDir(): String {
-                    // dump 输出到公共 dexDump 目录，便于后续本地修复引擎读取
+                    // dump 输出到公共 dump 目录，便于后续本地修复引擎读取
                     val dir = java.io.File(WORKSPACE_ROOT, "unpackcloud/dump")
                     dir.mkdirs()
                     return dir.absolutePath
@@ -144,8 +146,11 @@ class YunTuoXiuApp : Application() {
             }
             top.niunaijun.blackbox.BlackDexCore.get().doAttachBaseContext(this, clientConfig)
             top.niunaijun.blackbox.BlackDexCore.get().doCreate()
-            LogStore.i("YunTuoXiuApp", "✅ 本地脱壳引擎初始化完成")
+
+            com.yuntuoxiu.app.engine.LocalUnpackEngine.markReady(true)
+            LogStore.i("YunTuoXiuApp", "✅ 本地脱壳引擎初始化完成 (${chk.abi})")
         } catch (t: Throwable) {
+            com.yuntuoxiu.app.engine.LocalUnpackEngine.markReady(false, t.message)
             LogStore.w("YunTuoXiuApp", "本地脱壳引擎初始化异常（可能非主进程）: ${t.message}")
         }
     }

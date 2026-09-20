@@ -45,6 +45,18 @@ object ActionType {
 
     /** v1.6 新增：构建（DEX 替换+对齐+签名） */
     const val BUILD_APK = "BUILD_APK"
+
+    // ⭐ v2.0：本地引擎动作（脱离终端）
+    /** 本地脱壳（App 内 BlackBox 引擎） */
+    const val LOCAL_UNPACK = "LOCAL_UNPACK"
+    /** 本地修复（dump dex + 原 APK → 清壳重组） */
+    const val LOCAL_REPAIR = "LOCAL_REPAIR"
+    /** 本地签名（apksig） */
+    const val LOCAL_SIGN = "LOCAL_SIGN"
+    /** 本地一键（脱壳+修复+签名） */
+    const val LOCAL_ALL = "LOCAL_ALL"
+    /** 本地引擎自检 */
+    const val LOCAL_ENGINE_CHECK = "LOCAL_ENGINE_CHECK"
 }
 
 /**

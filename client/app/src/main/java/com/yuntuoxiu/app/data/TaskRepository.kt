@@ -216,12 +216,8 @@ object TaskRepository {
             //
             //    新逻辑：**只写一个 create 请求**，容器后端是唯一 watcher。
             //    （容器不在线时，请求会安全地留在 uploads/ 等待被消费，不丢。）
-            // ⭐ v1.8.4：改为 BackendBridge（容器后端状态桥），仅做在线性检查+日志。
-            //   任务创建 100% 交给容器后端 watcher（单一真相源）。
-            val bridge = com.yuntuoxiu.app.worker.BackendBridge
-            bridge.ensureRequest()
-
-            Log.i(TAG, "已提交: ${finalApk.absolutePath} (pkg=$pkg) → 等待容器后端消费")
+            // ⭐ v2.0：全本地化 —— 不再有容器后端，请求就地处理。
+            Log.i(TAG, "已提交: ${finalApk.absolutePath} (pkg=$pkg)")
             SubmitResult.Success(finalApk.absolutePath)
         } catch (e: Exception) {
             SubmitResult.Failure(e.message ?: "提交失败")

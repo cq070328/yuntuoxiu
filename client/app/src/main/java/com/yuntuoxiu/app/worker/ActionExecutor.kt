@@ -45,12 +45,158 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                 ActionType.UPLOAD_CHUNK -> onUpload(payload)
                 ActionType.BUILD_APK -> onBuild(payload)
                 ActionType.CANCEL -> ActionResponse(true, "cancelled")
+                // ⭐ v2.0 本地引擎动作
+                ActionType.LOCAL_UNPACK -> onLocalUnpack(payload)
+                ActionType.LOCAL_REPAIR -> onLocalRepair(payload)
+                ActionType.LOCAL_SIGN -> onLocalSign(payload)
+                ActionType.LOCAL_ALL -> onLocalAll(payload)
+                ActionType.LOCAL_ENGINE_CHECK -> onLocalEngineCheck(payload)
                 else -> ActionResponse(false, "未知 action: ${payload.action}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "执行 action ${payload.action} 失败", e)
             ActionResponse(false, e.message ?: "执行异常")
         }
+    }
+
+    // ============================================================
+    // ⭐ v2.0 本地引擎动作（脱离终端 / 容器）
+    // ============================================================
+
+    /**
+     * 本地引擎自检：native so / assets / ABI / 初始化状态。
+     */
+    private fun onLocalEngineCheck(payload: ActionPayload): ActionResponse {
+        val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(context)
+        val ready = com.yuntuoxiu.app.engine.LocalUnpackEngine.isReady()
+        val ok = chk.available
+        val detail = buildString {
+            append("本地脱壳引擎: ")
+            append(if (ok) "可用" else "不可用")
+            append(" (初始化=${if (ready) "已就绪" else "未就绪"})")
+            if (chk.problems.isNotEmpty()) append("\n问题: " + chk.problems.joinToString("; "))
+        }
+        return ActionResponse(ok, detail, mapOf(
+            "abi" to chk.abi,
+            "so_main" to chk.soMain,
+            "so_dump" to chk.soDump,
+            "native_dir" to chk.nativeDir,
+            "engine_ready" to ready,
+            "problems" to chk.problems
+        ))
+    }
+
+    /**
+     * 本地脱壳（App 内 BlackBox 引擎，无需 Xposed/终端）。
+     * params: package（已安装包名） 或 apk（本地 APK 路径）
+     */
+    private fun onLocalUnpack(payload: ActionPayload): ActionResponse {
+        val pkg = payload.params["package"] as? String
+        val apkPath = payload.params["apk"] as? String
+
+        val dexes: List<java.io.File> = when {
+            !apkPath.isNullOrBlank() -> {
+                Log.i(TAG, "本地脱壳(文件): $apkPath")
+                com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpFile(
+                    context, java.io.File(apkPath)) { Log.i(TAG, "  $it") }
+            }
+            !pkg.isNullOrBlank() -> {
+                Log.i(TAG, "本地脱壳(包名): $pkg")
+                com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpInstalled(
+                    context, pkg) { Log.i(TAG, "  $it") }
+            }
+            else -> return ActionResponse(false, "缺 package 或 apk 参数")
+        }
+
+        if (dexes.isEmpty()) {
+            return ActionResponse(false,
+                "本地脱壳未产出 DEX（目标可能未启动/壳对抗/引擎异常）",
+                mapOf("fail_code" to "DUMP_LOCAL_EMPTY"))
+        }
+        val sum = com.yuntuoxiu.app.engine.LocalUnpackEngine.summarize(dexes)
+        return ActionResponse(true,
+            "本地脱壳完成: ${dexes.size} 个 dex",
+            sum + mapOf("source" to "local_engine"))
+    }
+
+    /**
+     * 本地修复：dump dex + 原 APK → 清壳重组。
+     * params: original_apk（原 APK）、dex_dir（dump 目录，可选，默认任务 dump/）
+     */
+    private fun onLocalRepair(payload: ActionPayload): ActionResponse {
+        val origApk = payload.params["original_apk"] as? String
+            ?: return ActionResponse(false, "缺 original_apk")
+        val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$taskId")
+        val dexDir = (payload.params["dex_dir"] as? String)?.let { java.io.File(it) }
+            ?: java.io.File(taskDir, "dump")
+        val outApk = java.io.File(taskDir, "build/repaired.apk")
+
+        val dexes = com.yuntuoxiu.app.engine.LocalUnpackEngine.collectDex(dexDir)
+        if (dexes.isEmpty()) {
+            return ActionResponse(false, "未找到可用 DEX: ${dexDir.absolutePath}",
+                mapOf("fail_code" to "REPAIR_NO_DEX"))
+        }
+        val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
+            java.io.File(origApk), dexes, outApk, cleanShell = true
+        ) { Log.i(TAG, "  $it") }
+            ?: return ActionResponse(false, "本地重组失败", mapOf("fail_code" to "REPAIR_FAIL"))
+
+        return ActionResponse(true,
+            "本地修复完成: dex=${res.dexCount} 清壳=${res.removedShell}",
+            mapOf("out_apk" to res.outApk.absolutePath,
+                  "dex_count" to res.dexCount,
+                  "removed_shell" to res.removedShell))
+    }
+
+    /**
+     * 本地签名（apksig）。
+     * params: in_apk（待签名）、out_apk（可选）
+     */
+    private fun onLocalSign(payload: ActionPayload): ActionResponse {
+        val inApk = payload.params["in_apk"] as? String
+            ?: return ActionResponse(false, "缺 in_apk")
+        val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$taskId")
+        val outApk = (payload.params["out_apk"] as? String)?.let { java.io.File(it) }
+            ?: java.io.File(taskDir, "build/signed.apk")
+
+        val res = com.yuntuoxiu.app.engine.LocalApkSigner.sign(
+            java.io.File(inApk), outApk, null
+        ) { Log.i(TAG, "  $it") }
+        return if (res.ok) {
+            ActionResponse(true, "本地签名完成", mapOf("out_apk" to res.outApk?.absolutePath))
+        } else {
+            ActionResponse(false, res.detail, mapOf("fail_code" to "SIGN_FAIL"))
+        }
+    }
+
+    /**
+     * 本地一键：脱壳 → 修复 → 签名。
+     * params: package / apk、original_apk
+     */
+    private fun onLocalAll(payload: ActionPayload): ActionResponse {
+        val pre = onLocalUnpack(payload)
+        if (!pre.ok) return pre
+        // 把 dump 的 dex 收集到任务目录供修复使用（若在同一目录则无需动）
+        val origApk = payload.params["original_apk"] as? String
+        if (origApk.isNullOrBlank()) {
+            return ActionResponse(true, "脱壳完成（未提供 original_apk，跳过修复）",
+                pre.extra)
+        }
+        val p2 = HashMap<String, Any?>(payload.params)
+        p2["original_apk"] = origApk
+        val rep = onLocalRepair(ActionPayload(payload.seq, ActionType.LOCAL_REPAIR,
+            payload.taskId, payload.createdAt, p2))
+        if (!rep.ok) return rep
+        val outApk = rep.extra["out_apk"] as? String
+            ?: return ActionResponse(false, "修复产物缺失")
+        val p3 = HashMap<String, Any?>(payload.params)
+        p3["in_apk"] = outApk
+        val sign = onLocalSign(ActionPayload(payload.seq, ActionType.LOCAL_SIGN,
+            payload.taskId, payload.createdAt, p3))
+        return if (sign.ok) {
+            ActionResponse(true, "本地一键完成（脱壳+修复+签名）",
+                sign.extra + mapOf("repaired_apk" to outApk))
+        } else sign
     }
 
     /** 纯环境预检：只上报状态，禁触发 dump */
@@ -225,13 +371,10 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
             ActionResponse(false, "过滤后无合法 dex")
     }
 
-    /**
-     * 构建：把任务 dump/ 里的 DEX 装回原 APK（替换+对齐+签名）。
+/**
+     * 构建：把任务 dump/ 里的 DEX 装回原 APK（替换+清壳+签名）。
      *
-     * v1.6 新增。调容器/Termux 的 ytx_build_from_dump.sh。
-     *
-     * ⚠️ 注意：构建是重活（apktool/java），需容器或 Termux。
-     *   本动作会通过「命令桥」（cmd 目录下的 .cmd 文件）触发，由 worker 执行。
+     * ⭐ v2.0：完全本地化 —— 不再走命令桥/容器，直接在 App 内完成。
      */
     private fun onBuild(payload: ActionPayload): ActionResponse {
         val origApk = payload.params["original_apk"] as? String
@@ -239,27 +382,31 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
         val taskDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$taskId")
         val dumpDir = File(taskDir, "dump")
         if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
-            return ActionResponse(false, "任务 dump 目录为空（先收集 DEX）",
+            return ActionResponse(false, "任务 dump 目录为空（先本地脱壳）",
                 mapOf("dump_dir" to dumpDir.absolutePath))
         }
-        val outApk = File(taskDir, "build/out.apk")
+        val dexes = com.yuntuoxiu.app.engine.LocalUnpackEngine.collectDex(dumpDir)
+        if (dexes.isEmpty()) {
+            return ActionResponse(false, "无可用 DEX", mapOf("fail_code" to "BUILD_NO_DEX"))
+        }
+        val repaired = File(taskDir, "build/repaired.apk")
+        val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
+            File(origApk), dexes, repaired, cleanShell = true
+        ) ?: return ActionResponse(false, "本地重组失败", mapOf("fail_code" to "BUILD_FAIL"))
 
-        // 通过命令桥触发（worker 执行真正的构建）
-        val cmdDir = File(YunTuoXiuApp.CLOUD_ROOT, "cmd").apply { mkdirs() }
-        val stamp = System.currentTimeMillis()
-        val cmdFile = File(cmdDir, "build_${stamp}.cmd")
-        cmdFile.writeText(
-            "run_script\n" +
-            "/storage/emulated/0/MT2/apks/ytx_build_from_dump.sh\n" +
-            "$origApk\n${dumpDir.absolutePath}\n${outApk.absolutePath}\n"
-        )
-        Log.i(TAG, "已下发构建请求: ${cmdFile.name}")
-
-        return ActionResponse(
-            true,
-            "已下发构建请求（worker 执行中）",
-            mapOf("cmd" to cmdFile.name, "out" to outApk.absolutePath)
-        )
+        val signed = File(taskDir, "build/signed.apk")
+        val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(repaired, signed, null)
+        return if (sr.ok) {
+            ActionResponse(true, "本地构建完成（修复+签名）",
+                mapOf("out_apk" to signed.absolutePath,
+                      "dex_count" to res.dexCount,
+                      "removed_shell" to res.removedShell,
+                      "source" to "local_engine"))
+        } else {
+            ActionResponse(true, "构建完成但签名失败: ${sr.detail}",
+                mapOf("repaired_apk" to repaired.absolutePath,
+                      "sign_error" to sr.detail))
+        }
     }
 
     private fun onUpload(payload: ActionPayload): ActionResponse {

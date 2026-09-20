@@ -36,7 +36,6 @@ import com.yuntuoxiu.app.data.TaskMetaView
 import com.yuntuoxiu.app.data.TaskRepository
 import com.yuntuoxiu.app.shizuku.ShizukuClient
 import com.yuntuoxiu.app.shizuku.ShizukuShellExecutor
-import com.yuntuoxiu.app.worker.BackendBridge
 import com.yuntuoxiu.app.worker.WorkerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -235,80 +234,58 @@ class MainActivity : AppCompatActivity() {
             val tv = findViewById<TextView>(R.id.tvTermuxStatus) ?: return
             val badge = findViewById<TextView>(R.id.tvServiceBadge)
 
-            val npatch = File(YunTuoXiuApp.NPATCH_ASSETS).exists()
-            val module = File(YunTuoXiuApp.DUMP_MODULE_APK).exists()
-            val injector = File("${YunTuoXiuApp.WORKSPACE_ROOT}/ytx_npatch_inject.sh").exists()
-            val token = File(YunTuoXiuApp.TOKEN_FILE).exists()
-
-            val ready = npatch && module && injector
-
-            // ⭐ v1.6.8 显示「内置 worker」真实状态（便于诊断）
-            val workerAlive = try {
-                com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()
-            } catch (_: Throwable) { false }
-            val hbInfo = try {
-                com.yuntuoxiu.app.worker.ContainerBridge.heartbeatInfo()
-            } catch (_: Throwable) { "读取失败" }
+            // v2.0：本地引擎状态（不再依赖 NPatch/脱壳模块/worker）
+            val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(this)
+            val ready = com.yuntuoxiu.app.engine.LocalUnpackEngine.isReady()
+            val ks = com.yuntuoxiu.app.engine.LocalApkSigner.locateDefaultKeystore()
 
             tv.text = when {
-                !ready -> "本地引擎：⚠️ 缺 " + listOfNotNull(
-                    if (!npatch) "NPatch素材" else null,
-                    if (!module) "脱壳模块" else null,
-                    if (!injector) "注入器" else null
-                ).joinToString("/")
-                workerAlive -> "本地引擎：✅ 就绪（worker 在线${if (token) " + 云端" else ""}）"
-                else -> "本地引擎：⚠️ 就绪但 worker 离线\n  $hbInfo"
+                !chk.available -> "本地引擎：⚠️ " + chk.problems.firstOrNull().orEmpty()
+                !ready -> "本地引擎：⚠️ 已就绪但未初始化"
+                ks == null -> "本地引擎：✅ 可脱壳（签名缺密钥）"
+                else -> "本地引擎：✅ 就绪（脱壳+修复+签名）"
             }
             badge?.setTextColor(
-                if (ready && workerAlive) 0xFF3FB950.toInt()
-                else if (ready) 0xFFF0883E.toInt()
+                if (chk.available && ready) 0xFF3FB950.toInt()
+                else if (chk.available) 0xFFF0883E.toInt()
                 else 0xFFF85149.toInt())
         } catch (t: Throwable) {
             LogStore.w(TAG, "刷新引擎状态失败: ${t.message}")
         }
     }
 
-    /**
-     * v1.6.1 环境诊断（长按「本地引擎」行触发）。
-     * 输出：Shizuku + 本地引擎 + 工作区 + 后端偏好
+/**
+     * v2.0 环境诊断（长按「本地引擎」行触发）。
+     * 输出：本地脱壳引擎 + 修复/签名 + Shizuku + 工作区（全本地，无终端依赖）
      */
     private fun diagnoseTermux() {
         lifecycleScope.launch {
             val report = withContext(Dispatchers.IO) {
                 val ws = YunTuoXiuApp.WORKSPACE_ROOT
                 val sb = StringBuilder()
-                sb.append("== 云脱修 环境诊断 ==\n\n")
+                sb.append("== 云脱修 环境诊断 (v2.0 本地化) ==\n\n")
 
-                sb.append("[Shizuku]\n")
-                sb.append("  已授权: ${ShizukuClient.isGranted()}\n\n")
-
-                sb.append("[本地引擎]\n")
-                val engine = listOf(
-                    "NPatch素材" to "$ws/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex",
-                    "脱壳模块" to "$ws/ytx-tools/ytxdump-module.apk",
-                    "注入器" to "$ws/ytx_npatch_inject.sh",
-                    "DEX替换" to "$ws/ytx-dex-replace.py",
-                    "对齐" to "$ws/ytx-zipalign.py",
-                    "去壳" to "$ws/ytx-unpack-clean.py",
-                    "诊断" to "$ws/ytx_diag_launch.sh",
-                    "云端" to "$ws/ytx-cloud-build.py",
-                    "token" to "$ws/yuntuoxiu-dev/token.txt"
-                )
-                engine.forEach { (n, p) ->
-                    sb.append("  ${if (File(p).exists()) "✅" else "❌"} $n\n")
+                sb.append("[本地脱壳引擎]\n")
+                val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(this@MainActivity)
+                sb.append("  ${if (chk.available) "✅" else "❌"} native (${chk.abi})\n")
+                sb.append("  ${if (chk.soMain) "✅" else "❌"} libblackdex.so\n")
+                sb.append("  ${if (chk.soDump) "✅" else "❌"} libblackdex_d.so\n")
+                sb.append("  ${if (com.yuntuoxiu.app.engine.LocalUnpackEngine.isReady()) "✅" else "⚠️"} 引擎初始化\n")
+                if (chk.problems.isNotEmpty()) {
+                    sb.append("  ⚠️ ${chk.problems.joinToString("; ")}\n")
                 }
+                sb.append("\n[本地修复/签名]\n")
+                sb.append("  ✅ 修复引擎（Kotlin）\n")
+                val ks = com.yuntuoxiu.app.engine.LocalApkSigner.locateDefaultKeystore()
+                sb.append("  ${if (ks != null) "✅" else "❌"} 密钥库 ${ks?.name ?: "(缺失)"}\n")
+
+                sb.append("\n[Shizuku（可选）]\n")
+                sb.append("  ${if (ShizukuClient.isGranted()) "✅" else "⚠️"} 已授权${if (ShizukuClient.isGranted()) "" else "（不影响本地脱壳）"}\n")
 
                 sb.append("\n[工作区]\n")
                 sb.append("  可读: ${File(ws).exists()}\n")
+                sb.append("  dump 目录: ${com.yuntuoxiu.app.engine.LocalUnpackEngine.getDumpDir().absolutePath}\n")
                 sb.append("  任务数: ${File("$ws/unpackcloud/tasks").listFiles()?.size ?: 0}\n")
-
-                sb.append("\n[后端偏好]\n")
-                sb.append("  ${readBackendPref()}\n")
-
-                sb.append("\n[可选环境]\n")
-                sb.append("  容器后端: ${BackendBridge.readDaemonStatus().second}\n")
-                sb.append("  容器: ${File("/root/ytx-tools/apktool.jar").exists()}\n")
-
                 sb.toString()
             }
             showResultDialog("环境诊断", report)
@@ -326,76 +303,24 @@ class MainActivity : AppCompatActivity() {
         } catch (t: Throwable) { "?" }
     }
 
-    /** 选择构建后端（持久化到 .build_backend） */
+    /** 选择构建后端（v2.0 已废弃——全本地化，无后端可选） */
     private fun chooseBuildBackend() {
-        lifecycleScope.launch {
-            val cur = withContext(Dispatchers.IO) { readBackendPref() }
-            val labels = listOf(
-                "自动（推荐：云端 > 容器 > Termux）",
-                "云端构建（GitHub Actions）",
-                "容器构建（Operit Ubuntu）",
-                "Termux 构建"
-            )
-            val vals = listOf("auto", "cloud", "container", "termux")
-            val checked = vals.indexOf(cur).coerceAtLeast(0)
-            showSingleChoiceDialog("选择构建后端（当前：$cur）", labels, checked) { which ->
-                val v = vals[which]
-                lifecycleScope.launch {
-                    withContext(Dispatchers.IO) { writeBackendPref(v) }
-                    Toast.makeText(this@MainActivity,
-                        "已设置：$v", Toast.LENGTH_SHORT).show()
-                    refreshBackendStatus()
-                }
-            }
-        }
+        showResultDialog("构建后端", "v2.0 已全面本地化：\n脱壳/修复/签名均在 App 内完成，无需选择后端。")
     }
-
-    private fun readBackendPref(): String {
-        return try {
-            val f = File(YunTuoXiuApp.CLOUD_ROOT, ".build_backend")
-            if (f.exists()) f.readText().trim().ifBlank { "auto" } else "auto"
-        } catch (t: Throwable) { "auto" }
-    }
-
-    private fun writeBackendPref(v: String) {
-        try {
-            val f = File(YunTuoXiuApp.CLOUD_ROOT, ".build_backend")
-            f.parentFile?.mkdirs()
-            f.writeText(v)
-        } catch (t: Throwable) {
-            LogStore.e(TAG, "写后端偏好失败: ${t.message}")
-        }
-    }
-
-    /** 刷新「构建后端」状态行 */
+    private fun readBackendPref(): String = "local"
+    private fun writeBackendPref(v: String) { /* v2.0 无需后端偏好 */ }
+    /** 刷新「本地引擎」状态行（原「构建后端」） */
     private fun refreshBackendStatus() {
         lifecycleScope.launch {
             val (txt, ok) = withContext(Dispatchers.IO) {
-                val pref = readBackendPref()
-                // 可用性检查（粗粒度）
-                val cloudOk = File(YunTuoXiuApp.TOKEN_FILE).let {
-                    it.exists() && it.length() > 20
+                val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(this@MainActivity)
+                val ready = com.yuntuoxiu.app.engine.LocalUnpackEngine.isReady()
+                val t = when {
+                    !chk.available -> "本地引擎：不可用（${chk.problems.firstOrNull() ?: "?"}）"
+                    !ready -> "本地引擎：已就绪未初始化"
+                    else -> "本地引擎：✅ ${chk.abi}"
                 }
-                val containerOk = File("/root/ytx-tools/apktool.jar").exists() ||
-                        File("${YunTuoXiuApp.TOOLS_DIR}/apktool.jar").exists()
-                // ⭐ v1.8.4：Termux 已弃用 -> 用「容器后端在线」替代 termuxOk
-                val backendOk = BackendBridge.readDaemonStatus().first
-
-                val pick = when (pref) {
-                    "cloud" -> if (cloudOk) "cloud" else null
-                    "container" -> if (containerOk) "container" else null
-                    // Termux 已弃用：选择 termux 时回退到容器后端
-                    "termux" -> if (backendOk) "container" else null
-                    else -> when {
-                        cloudOk -> "cloud"
-                        containerOk -> "container"
-                        backendOk -> "container"
-                        else -> null
-                    }
-                }
-                val title = "构建后端：$pref" +
-                    (if (pick != null) " → 用 $pick" else "（无可用）")
-                title to (pick != null)
+                t to (chk.available && ready)
             }
             findViewById<TextView>(R.id.tvBackend)?.text = txt
             findViewById<TextView>(R.id.tvBackendBadge)?.setTextColor(
@@ -427,13 +352,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "请先「选APK」创建任务", Toast.LENGTH_LONG).show()
                 return@launch
             }
-
-            // ⭐ v1.6.9：先确保 worker 在线（否则提前给出可操作提示）
-            if (!com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()) {
-                showWorkerOfflineDialog { runOneClickUnpack() }
-                return@launch
-            }
-
+            // v2.0：全本地化，无需 worker/容器，直接进入
             val names = tasks.map { "${it.displayName}  [${it.stateLabel}]" }.toTypedArray()
             showItemsDialog(
                 "一键脱修 · 选择任务",
@@ -444,49 +363,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * ⭐ v1.7.0 后端离线提示（阶梯式引导）
-     *
-     * 为什么需要引导：
-     *   容器进程属 Operit（uid 隔离），Shizuku/本 APP 都无法启动它。
-     *   → 只能让 Operit 侧启动。
-     */
+    /** v2.0：后端离线提示已废弃（全本地化，无后端） */
     private fun showWorkerOfflineDialog(onRetry: () -> Unit) {
-        try {
-            val hb = com.yuntuoxiu.app.worker.ContainerBridge.heartbeatInfo()
-
-            // ★ 给 Operit 的指令（复制到剪贴板）
-            val operitCmd = "启动云脱修后端（bash /sdcard/MT2/apks/ytx.sh start）"
-
-            AlertDialog.Builder(this, R.style.YtxDialog)
-                .setTitle("需要先启动后端")
-                .setMessage(
-                    "云脱修的「注入 / 构建」依赖 Operit 容器（bash+java+python3），\n" +
-                    "而容器进程属于 Operit，本 APP 无法直接启动它。\n\n" +
-                    "【方式一 · 推荐】\n" +
-                    "复制下面这句，粘贴到 Operit 对话框发送：\n" +
-                    "  $operitCmd\n" +
-                    "（Operit 会调用 yuntuoxiu 包启动后端）\n\n" +
-                    "【方式二 · 终端】\n" +
-                    "在 Operit 终端执行：\n" +
-                    "  ${YunTuoXiuApp.START_CMD}\n\n" +
-                    "当前心跳: $hb"
-                )
-                .setPositiveButton("复制并打开 Operit") { _, _ ->
-                    copyToClipboard("ytx_operit", operitCmd)
-                    Toast.makeText(this,
-                        "✅ 已复制，粘贴到 Operit 发送即可", Toast.LENGTH_LONG).show()
-                    openOperit()
-                }
-                .setNeutralButton("打开 Operit") { _, _ -> openOperit() }
-                .setNegativeButton("我已启动，重试") { _, _ -> onRetry() }
-                .create().also { styleDialogWindow(it) }.show()
-        } catch (t: Throwable) {
-            showResultDialog("后端离线",
-                "请在 Operit 执行：\n${YunTuoXiuApp.START_CMD}")
-        }
+        showResultDialog("提示", "v2.0 已全面本地化，无需启动任何后端。")
     }
-
     /** 打开 Operit（主界面） */
     private fun openOperit() {
         try {
@@ -541,68 +421,64 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             val tid = task.taskId
-            val log = StringBuilder("== 一键脱修 · $tid ==\n\n")
+            val log = StringBuilder("== 一键脱修(本地) · $tid ==\n\n")
+            log.append("全本地化：脱壳 → 修复 → 签名，均在 App 内完成\n\n")
 
-            // ① 确保后端在线
-            val (alive, desc) = withContext(Dispatchers.IO) {
-                com.yuntuoxiu.app.worker.BackendBridge.readDaemonStatus()
-            }
-            log.append("后端状态: $desc\n\n")
-            if (!alive) {
-                showWorkerOfflineDialog { oneClickRun(task) }
-                return@launch
-            }
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    val pkg = task.lookupPackage
+                    val srcApk = task.sourceApk
 
-            // ② 确保 WorkerService 在跑（执行设备动作）
-            try {
-                startForegroundService(android.content.Intent(this@MainActivity,
-                    com.yuntuoxiu.app.worker.WorkerService::class.java))
-            } catch (_: Throwable) {}
+                    // ① 本地脱壳
+                    log.append("[1/3] 本地脱壳...\n")
+                    val dexes = if (srcApk.isNotBlank() && File(srcApk).isFile) {
+                        com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpFile(
+                            this@MainActivity, File(srcApk)) { }
+                    } else if (!pkg.isNullOrBlank()) {
+                        com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpInstalled(
+                            this@MainActivity, pkg) { }
+                    } else emptyList()
+                    if (dexes.isEmpty()) return@withContext "❌ 脱壳未产出 DEX"
+                    log.append("      ✅ " + dexes.size + " 个 dex\n")
 
-            log.append("已接管，正在推进后端流水线…\n")
-            log.append("（注入/安装/dump/修复 由后端状态机自动完成）\n\n")
-            LogStore.i(TAG, "一键脱修(状态机模式) 启动: $tid")
+                    // 归拢到任务 dump
+                    val taskDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$tid")
+                    val dumpDir = File(taskDir, "dump"); dumpDir.mkdirs()
+                    dexes.forEach { runCatching { it.copyTo(File(dumpDir, it.name), true) } }
 
-            // ③ 监控状态机推进（最多 ~20 分钟）
-            var lastState = ""
-            val terminal = setOf("SUCCESS", "FAILED", "CANCELLED", "PRE_CHECK_FAILED")
-            val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
-            var finalTask: TaskMetaView? = null
+                    // ② 本地修复
+                    log.append("[2/3] 本地修复(清壳+重组)...\n")
+                    if (srcApk.isBlank() || !File(srcApk).isFile) {
+                        return@withContext "❌ 缺少原 APK，无法重组"
+                    }
+                    val repaired = File(taskDir, "build/repaired.apk")
+                    val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
+                        File(srcApk), dexes, repaired, cleanShell = true
+                    ) ?: return@withContext "❌ 重组失败"
+                    log.append("      ✅ dex=${res.dexCount} 清壳=${res.removedShell}\n")
 
-            while (System.currentTimeMillis() < deadline) {
-                delay(2500)
-                val t = withContext(Dispatchers.IO) {
-                    try { TaskRepository.loadTask(tid) } catch (_: Throwable) { null }
-                } ?: continue
-                if (t.state != lastState) {
-                    lastState = t.state
-                    log.append("[${t.stateLabel}] ${t.state}\n")
-                    LogStore.i(TAG, "任务 $tid 状态 -> ${t.state}")
+                    // ③ 本地签名
+                    log.append("[3/3] 本地签名...\n")
+                    val signed = File(taskDir, "build/signed.apk")
+                    val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(repaired, signed, null)
+                    if (!sr.ok) {
+                        log.append("      ⚠️ 签名失败: ${sr.detail}\n")
+                        log.append("      修复产物: ${repaired.absolutePath}\n")
+                        "⚠️ 脱壳+修复完成（签名失败）"
+                    } else {
+                        log.append("      ✅ ${signed.absolutePath}\n")
+                        // 复制一份到工作区根，便于查找
+                        runCatching {
+                            signed.copyTo(File(YunTuoXiuApp.WORKSPACE_ROOT, "云脱修-$tid.apk"), true)
+                        }
+                        "✅ 完成"
+                    }
+                } catch (e: Throwable) {
+                    "❌ 异常: ${e.message}"
                 }
-                if (t.state in terminal) {
-                    finalTask = t
-                    break
-                }
             }
-
-            // ④ 展示结果
-            val ft = finalTask
-            if (ft == null) {
-                showResultDialog("一键脱修 · 超时",
-                    log.toString() + "\n⚠️ 20 分钟内未到终态，请稍后在任务详情查看。")
-            } else if (ft.state == "SUCCESS") {
-                val outApk = File("${YunTuoXiuApp.WORKSPACE_ROOT}/云脱修-${tid}.apk")
-                log.append("\n🎉 完成！\n")
-                if (outApk.exists()) {
-                    log.append("产物: ${outApk.absolutePath}\n（${outApk.length() / 1024}KB）\n")
-                }
-                showResultDialog("一键脱修 · 成功", log.toString())
-            } else {
-                log.append("\n❌ 失败: ${ft.stateLabel}\n")
-                ft.failCode?.let { log.append("错误码: $it\n") }
-                log.append("可在任务详情查看「处理记录」定位。\n")
-                showResultDialog("一键脱修 · 失败", log.toString())
-            }
+            log.append("\n$result\n")
+            showResultDialog("一键脱修(本地) · $task", log.toString())
             refreshTasks()
         }
     }
@@ -631,10 +507,10 @@ class MainActivity : AppCompatActivity() {
             listOf(
                 Triple("🔍", "壳诊断", "本地读 APK 判定壳类型（秒级）"),
                 Triple("🧹", "去壳清理", "删壳 so/assets（本地）"),
-                Triple("📤", "收集 Dump", "Shizuku 读取 Xposed 模块产物"),
-                Triple("☁️", "云端构建", "上传 DEX → GitHub Actions"),
-                Triple("🩹", "smali 替换", "修壳桩/native桩（闪退时用）"),
-                Triple("📋", "环境自检", "检查 Shizuku/token/脚本"),
+                Triple("📤", "本地脱壳", "App 内引擎脱 DEX（无需终端）"),
+                Triple("🔧", "本地修复", "清壳重组 + 签名（App 内）"),
+                Triple("ⓘ", "引擎详情", "本地脱壳引擎自检"),
+                Triple("📋", "环境自检", "检查 Shizuku / 本地引擎"),
                 Triple("ℹ️", "工具用法说明", "各功能说明")
             )
         ) { which ->
@@ -643,7 +519,7 @@ class MainActivity : AppCompatActivity() {
                 1 -> toolUnpackClean()
                 2 -> toolCollectDump()
                 3 -> toolCloudBuild()
-                4 -> toolSmaliPatch()
+                4 -> toolEnvCheck()
                 5 -> toolEnvCheck()
                 6 -> showToolsHelp()
             }
@@ -745,212 +621,174 @@ class MainActivity : AppCompatActivity() {
             }
             val names = cands.map { it.displayName }.toTypedArray()
             showItemsDialog(
-            "选择要收集 Dump 的任务",
-            names.map { Triple("", it, "") }
-        ) { which ->
-            val t = cands[which]
-            val pkg = t.lookupPackage!!
-            lifecycleScope.launch {
-            Toast.makeText(this@MainActivity, "收集中…", Toast.LENGTH_SHORT).show()
-            val out = withContext(Dispatchers.IO) {
-            try {
-            val dest = File(YunTuoXiuApp.CLOUD_ROOT,
-            "tasks/${t.taskId}/dump")
-            dest.mkdirs()
-            val cmd = "mkdir -p '${dest.absolutePath}' && " +
-            "if [ -d '/sdcard/Android/data/$pkg/files/ytx_dump' ]; then " +
-            "cp -f '/sdcard/Android/data/$pkg/files/ytx_dump'/dex_*.dex " +
-            "'${dest.absolutePath}/' 2>/dev/null; " +
-            "ls '${dest.absolutePath}'/dex_*.dex 2>/dev/null | wc -l; " +
-            "else echo NOT_FOUND; fi"
-            val r = ShizukuShellExecutor.exec(cmd)
-            val o = (r.getString("stdout") ?: "").trim()
-            if (o == "NOT_FOUND")
-            "❌ 未找到模块 dump 目录（先让模块跑一次）"
-            else "✅ 收集 $o 个 dex -> ${dest.absolutePath}"
-            } catch (e: Throwable) {
-            "收集失败: ${e.message}"
+                "选择要本地脱壳的任务",
+                names.map { Triple("", it, "") }
+            ) { which ->
+                val t = cands[which]
+                val pkg = t.lookupPackage!!
+                val srcApk = t.sourceApk
+                lifecycleScope.launch {
+                    Toast.makeText(this@MainActivity, "本地脱壳中…", Toast.LENGTH_SHORT).show()
+                    val out = withContext(Dispatchers.IO) {
+                        try {
+                            // 优先对本地 APK 脱壳，回退对已安装包脱壳
+                            val dexes = if (srcApk.isNotBlank() && File(srcApk).isFile) {
+                                com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpFile(
+                                    this@MainActivity, File(srcApk)) { }
+                            } else {
+                                com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpInstalled(
+                                    this@MainActivity, pkg) { }
+                            }
+                            if (dexes.isEmpty()) {
+                                "❌ 本地脱壳未产出 DEX\n（目标可能未启动 / 壳对抗 / 引擎异常）"
+                            } else {
+                                // 归拢到任务 dump 目录
+                                val dest = File(YunTuoXiuApp.CLOUD_ROOT,
+                                    "tasks/${t.taskId}/dump")
+                                dest.mkdirs()
+                                var n = 0
+                                for (d in dexes) {
+                                    try {
+                                        d.copyTo(File(dest, d.name), overwrite = true); n++
+                                    } catch (_: Throwable) {}
+                                }
+                                "✅ 本地脱壳 $n 个 dex -> ${dest.absolutePath}"
+                            }
+                        } catch (e: Throwable) {
+                            "本地脱壳失败: ${e.message}"
+                        }
+                    }
+                    showResultDialog("本地脱壳", out)
+                }
             }
-            }
-            showResultDialog("收集 Dump", out)
-            }
-        }
         }
     }
 
-    /** 工具 4：云端构建 */
+    /** 工具 4：本地修复 + 签名（原「云端构建」，已完全本地化） */
     private fun toolCloudBuild() {
         lifecycleScope.launch {
             val tasks = withContext(Dispatchers.IO) {
                 try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
             }
-            val cands = tasks.filter { it.isTerminal }
+            val cands = tasks.filter { it.sourceApk.isNotBlank() }
             if (cands.isEmpty()) {
-                Toast.makeText(this@MainActivity, "暂无已处理任务", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "暂无任务", Toast.LENGTH_SHORT).show()
                 return@launch
             }
             val names = cands.map { it.displayName }.toTypedArray()
             showItemsDialog(
-            "选择要云端构建的任务",
-            names.map { Triple("", it, "") }
-        ) { which ->
-            val t = cands[which]
-            val ws = YunTuoXiuApp.WORKSPACE_ROOT
-            val dumpDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}/dump")
-            if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
-                Toast.makeText(this@MainActivity,
-                    "该任务无 dump（先用「收集 Dump」）", Toast.LENGTH_LONG).show()
-                return@showItemsDialog
-            }
-// ⭐ v1.6.7 修复：改为容器委托（Shizuku shell 无 python3）
-                    lifecycleScope.launch {
-                        Toast.makeText(this@MainActivity,
-                            "云端构建中（可能几分钟）…", Toast.LENGTH_LONG).show()
-                        if (!com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()) {
-                            showResultDialog("云端构建", 
-                                "❌ 容器 worker 未运行。\n\n" +
-                                "云端构建需 python3（容器有，Shizuku 无）。\n" +
-                                "请在 Operit 终端执行：\n" +
-                                "  " + YunTuoXiuApp.START_CMD + "")
-                            return@launch
-                        }
-                        val (ok, detail, _) = withContext(Dispatchers.IO) {
-                            com.yuntuoxiu.app.worker.ContainerBridge.execSync(
-                                "$ws/ytx-cloud-build.py",
-                                listOf("--task", t.taskId,
-                                       "--apk", t.sourceApk,
-                                       "--dump", dumpDir.absolutePath),
-                                1_800_000
-                            )
-                        }
-                        showResultDialog("云端构建结果",
-                            if (ok) "✅ $detail" else "❌ $detail")
-                    }
-        }
-        }
-    }
-
-    /** 工具 5：smali 替换（修壳桩，闪退时用） */
-    private fun toolSmaliPatch() {
-        lifecycleScope.launch {
-            val tasks = withContext(Dispatchers.IO) {
-                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
-            }
-            if (tasks.isEmpty()) {
-                Toast.makeText(this@MainActivity, "暂无任务", Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            val names = tasks.map { it.displayName }.toTypedArray()
-            showItemsDialog(
-                "smali 替换 · 选择任务",
+                "选择要本地修复的任务",
                 names.map { Triple("", it, "") }
             ) { which ->
-                val t = tasks[which]
-                showItemsDialog(
-                    "smali 替换模式",
-                    listOf(
-                        Triple("🔍", "仅识别（预览，不改）", "扫描壳特征但不动文件"),
-                        Triple("🩹", "识别并替换", "有则替换，无则跳过")
-                    )
-                ) { mode ->
-                    smaliPatchRun(t, mode == 0)
+                val t = cands[which]
+                val dumpDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}/dump")
+                if (!dumpDir.isDirectory || (dumpDir.listFiles()?.isEmpty() != false)) {
+                    Toast.makeText(this@MainActivity,
+                        "该任务无 dump（先用「本地脱壳」）", Toast.LENGTH_LONG).show()
+                    return@showItemsDialog
                 }
-            }
-        }
-    }
-
-    private fun smaliPatchRun(task: TaskMetaView, dryRun: Boolean) {
-        lifecycleScope.launch {
-            Toast.makeText(this@MainActivity,
-                if (dryRun) "识别中…" else "替换中…", Toast.LENGTH_SHORT).show()
-
-            // ⭐ v1.6.7 修复：改为容器委托（Shizuku shell 无 python3/java）
-            if (!com.yuntuoxiu.app.worker.ContainerBridge.isWorkerAlive()) {
-                showResultDialog(if (dryRun) "smali 识别" else "smali 替换",
-                    "❌ 容器 worker 未运行。\n\n" +
-                    "smali 替换需 python3 + apktool(java)，\n" +
-                    "Shizuku shell 没有这些。\n\n" +
-                    "请在 Operit 终端执行：\n" +
-                    "  " + YunTuoXiuApp.START_CMD + "")
-                return@launch
-            }
-
-            val out = withContext(Dispatchers.IO) {
-                try {
-                    val ws = YunTuoXiuApp.WORKSPACE_ROOT
-                    val tid = task.taskId
-                    val dec = "$ws/unpackcloud/tasks/$tid/work/apktool_dec"
-
-                    // ① 若还没解包，先委托容器解包
-                    if (!File(dec).exists()) {
-                        val (ok1, d1, _) = com.yuntuoxiu.app.worker.ContainerBridge.execSh(
-                            "mkdir -p '$dec' && java -jar $ws/ytx-tools/apktool.jar d " +
-                            "'${task.sourceApk}' -o '$dec' -f 2>&1 | tail -5",
-                            300_000
-                        )
-                        if (!File(dec).exists()) {
-                            return@withContext "❌ 解包失败\n$d1"
+                lifecycleScope.launch {
+                    Toast.makeText(this@MainActivity,
+                        "本地修复中…", Toast.LENGTH_LONG).show()
+                    val out = withContext(Dispatchers.IO) {
+                        try {
+                            val taskDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}")
+                            val dexes = com.yuntuoxiu.app.engine.LocalUnpackEngine
+                                .collectDex(dumpDir)
+                            if (dexes.isEmpty()) return@withContext "❌ 无可用 DEX"
+                            val repaired = File(taskDir, "build/repaired.apk")
+                            val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
+                                File(t.sourceApk), dexes, repaired, cleanShell = true
+                            ) ?: return@withContext "❌ 本地重组失败"
+                            // 签名
+                            val signed = File(taskDir, "build/signed.apk")
+                            val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(
+                                repaired, signed, null
+                            )
+                            if (!sr.ok) {
+                                "⚠️ 修复成功但签名失败: ${sr.detail}\n修复产物: ${repaired.absolutePath}"
+                            } else {
+                                "✅ 本地修复+签名完成\n" +
+                                "  dex=${res.dexCount} 清壳=${res.removedShell}\n" +
+                                "  产物: ${signed.absolutePath}"
+                            }
+                        } catch (e: Throwable) {
+                            "本地修复失败: ${e.message}"
                         }
                     }
-
-                    // ② 委托容器调 ytx-smali-patch.py
-                    val args = mutableListOf(dec)
-                    if (dryRun) args += "--dry-run"
-                    val (ok2, detail, _) = com.yuntuoxiu.app.worker.ContainerBridge.execSync(
-                        "$ws/ytx-smali-patch.py", args, 300_000
-                    )
-                    if (ok2) detail else "❌ $detail"
-                } catch (t: Throwable) {
-                    "❌ 失败: ${t.message}"
+                    showResultDialog("本地修复结果", out)
                 }
             }
-            showResultDialog(if (dryRun) "smali 识别" else "smali 替换", out)
         }
     }
+    }
 
-    /** 工具 6：环境自检 */
+    /** 工具 5：本地引擎详情（原「smali 替换」已废弃——终端依赖，v2.0 本地化后不再需要） */
+    private fun toolSmaliPatch() {
+        toolEnvCheck()
+    }
+/** 工具 6：环境自检（v2.0 纯本地化） */
     private fun toolEnvCheck() {
         lifecycleScope.launch {
             val rep = withContext(Dispatchers.IO) {
-                val ws = YunTuoXiuApp.WORKSPACE_ROOT
-                val sb = StringBuilder("== 云脱修 环境自检 ==\n\n")
-                sb.append("[核心]\n")
-                sb.append("  ${if (ShizukuClient.isGranted()) "✅" else "❌"} Shizuku 已授权\n")
-                sb.append("  ${if (File("$ws/yuntuoxiu-dev/token.txt").exists()) "✅" else "❌"} token.txt\n")
-                sb.append("  ${if (File("$ws/ytx-tools/npatch_assets").exists()) "✅" else "❌"} NPatch素材\n")
-                sb.append("  ${if (File("$ws/ytx-tools/ytxdump-module.apk").exists()) "✅" else "❌"} 脱壳模块\n\n")
+                val sb = StringBuilder("== 云脱修 环境自检 (v2.0 本地化) ==\n\n")
 
-                sb.append("[工具链]\n")
-                listOf("ytx_npatch_inject.sh", "ytx-dex-replace.py", "ytx-zipalign.py",
-                    "ytx-unpack-clean.py", "ytx-cloud-build.py", "ytx_diag_launch.sh")
-                    .forEach { f ->
-                        sb.append("  ${if (File("$ws/$f").exists()) "✅" else "❌"} $f\n")
-                    }
+                // ---- 本地引擎 ----
+                sb.append("[本地脱壳引擎]\n")
+                val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(this@MainActivity)
+                val ready = com.yuntuoxiu.app.engine.LocalUnpackEngine.isReady()
+                sb.append("  ${if (chk.available) "✅" else "❌"} native 库 (${chk.abi})\n")
+                sb.append("      " + if (chk.soMain) "libblackdex.so ✓" else "libblackdex.so ✗")
+                sb.append("  " + if (chk.soDump) "libblackdex_d.so ✓" else "libblackdex_d.so ✗")
+                sb.append("\n")
+                sb.append("  ${if (ready) "✅" else "⚠️"} 引擎初始化${if (ready) "完成" else "未就绪"}\n")
+                if (chk.problems.isNotEmpty()) {
+                    sb.append("  ⚠️ 问题: " + chk.problems.joinToString("; ") + "\n")
+                }
+                sb.append("\n")
 
-                sb.append("\n[构建后端]\n")
-                sb.append("  偏好: ${readBackendPref()}\n")
-                sb.append("  ${if (File("$ws/yuntuoxiu-dev/token.txt").exists()) "✅" else "❌"} 云端（GitHub）\n")
-                sb.append("  ${if (File("/root/ytx-tools/apktool.jar").exists()) "✅" else "❌"} 容器（Operit）\n")
-                sb.append("  ${if (BackendBridge.readDaemonStatus().first) "✅" else "❌"} 容器后端（调度器+worker）\n")
+                // ---- 修复/签名 ----
+                sb.append("[本地修复/签名]\n")
+                sb.append("  ✅ 修复引擎（清壳+重组，纯 Kotlin）\n")
+                val ks = com.yuntuoxiu.app.engine.LocalApkSigner.locateDefaultKeystore()
+                sb.append("  ${if (ks != null) "✅" else "⚠️"} 签名密钥库" +
+                        (ks?.let { " (${it.name})" } ?: "（未找到 ytx-release.jks，签名将失败）") + "\n")
+                sb.append("\n")
+
+                // ---- Shizuku（可选，仅用于安装/权限操作）----
+                sb.append("[Shizuku（可选）]\n")
+                sb.append("  ${if (ShizukuClient.isGranted()) "✅" else "⚠️"} Shizuku ${if (ShizukuClient.isGranted()) "已授权" else "未授权（不影响本地脱壳）"}\n")
+                sb.append("\n")
+
+                // ---- 工作区 ----
+                sb.append("[工作区]\n")
+                val dump = com.yuntuoxiu.app.engine.LocalUnpackEngine.getDumpDir()
+                sb.append("  ${if (dump.isDirectory) "✅" else "❌"} dump 目录: ${dump.absolutePath}\n")
+
                 sb.toString()
             }
             showResultDialog("环境自检", rep)
         }
     }
 
-    /** 工具 6：用法说明 */
+    /** 工具 7：用法说明（v2.0 本地化） */
     private fun showToolsHelp() {
-        showResultDialog("工具用法说明", 
-                "【本地功能】（无需环境）\n" +
-                "· 壳诊断：直接读 APK，判定壳类型（秒级）\n" +
-                "· 去壳清理：删壳 so/assets，找真实入口\n" +
-                "· 收集 Dump：Shizuku 读取模块产物\n\n" +
-                "【云端功能】（需 token + 网络）\n" +
-                "· 云端构建：上传 DEX → GitHub Actions → 下载 APK\n\n" +
-                "【需要 Termux/容器】（可选）\n" +
-                "· 构建脱壳模块（make_dump_module.sh）\n" +
-                "· smali 正则替换（需 baksmali/java）\n\n" +
-                "详见工作区「架构说明.md」")
+        showResultDialog("工具用法说明",
+            "【v2.0 全本地化 — 无需终端/容器】\n\n" +
+            "· 壳诊断   直接读 APK 判定壳类型\n" +
+            "· 去壳清理 删壳 so/assets\n" +
+            "· 本地脱壳 App 内引擎（BlackBox）脱 DEX\n" +
+            "· 本地修复 清壳重组 + apksig 签名\n" +
+            "· 引擎详情 本地脱壳引擎自检\n" +
+            "· 环境自检 检查引擎 / 密钥 / 工作区\n\n" +
+            "【脱壳流程】\n" +
+            "1. 本地脱壳 → unpackcloud/dump/<包名>/\n" +
+            "2. 本地修复 → tasks/<id>/build/signed.apk\n\n" +
+            "【限制】\n" +
+            "· 仅 arm64-v8a\n" +
+            "· Android 16 已适配（newBlackDex 3.3.x）\n" +
+            "· 高级壳可能检测沙箱导致 dump 为空\n\n" +
+            "详见工作区「工具使用说明.md」")
     }
 
     /** 长按任务：查看信息 + 删除 */

@@ -99,4 +99,9 @@ dependencies {
 
     // ⭐ v2.0：本地脱壳引擎（移植 newBlackDex / BlackBox 框架）
     implementation(project(":Bcore"))
+
+    // ⭐ v2.0：本地修复/打包/签名（脱离终端）
+    //   · apksig —— Google 官方 APK 签名库（v1/v2/v3）
+    //   注：DEX 修复用纯字节/ZipFile 实现（无需 dexlib2，减少依赖风险）
+    implementation("com.android.tools.build:apksig:8.5.2")
 }
