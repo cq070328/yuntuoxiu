@@ -129,6 +129,9 @@ object ShellDetect {
         val reasons = ArrayList<String>()
         val tagsAll = ArrayList<String>()
         val scores = HashMap<String, Double>()
+        // ⭐ 真实厂商名（在 try 块内赋值，函数尾部使用，故在函数作用域声明）
+        var matchedVendorNameOuter: String? = null
+        var matchedVendorsOuter: List<String> = emptyList()
 
         fun bump(tag: String, w: Double, reason: String) {
             if ((scores[tag] ?: 0.0) < w) scores[tag] = w
@@ -176,7 +179,6 @@ object ShellDetect {
                 // 2b) ⭐ v2.0：扩展特征库（47 厂商，全维度：so + assets + lib）
                 //     命中任一 → 判定该厂商（权重 0.85）
                 val matchedVendors = ArrayList<String>()
-                var matchedVendorName: String? = null
                 for (v in ShellSignatures.VENDORS) {
                     var hitName: String? = null
 
@@ -214,7 +216,7 @@ object ShellDetect {
                     }
                     if (hitName != null) {
                         matchedVendors.add("${v.vendor}($hitName)")
-                        if (matchedVendorName == null) matchedVendorName = v.vendor
+                        if (matchedVendorNameOuter == null) matchedVendorNameOuter = v.vendor
                         bump(v.tag, 0.85, "${v.vendor} 特征: $hitName")
                     }
                 }
@@ -232,7 +234,7 @@ object ShellDetect {
                                 val n = it.substringAfterLast('/').lowercase()
                                 n.endsWith(".so") && n.contains(p)
                             }) {
-                            if (matchedVendorName == null) matchedVendorName = st.vendor
+                            if (matchedVendorNameOuter == null) matchedVendorNameOuter = st.vendor
                             bump(st.tag, 0.70, "${st.vendor} 模糊特征: $pat")
                             break
                         }
@@ -348,7 +350,7 @@ object ShellDetect {
         }
 
         // ⭐ 真实厂商名：优先用厂商特征命中的 vendor，否则用 tag 中文名兜底
-        val vendor = matchedVendorName ?: tagLabel(bestTag)
+        val vendor = matchedVendorNameOuter ?: tagLabel(bestTag)
         LogStore.i(TAG, "壳识别: $bestTag / $vendor (${"%.2f".format(bestConf)}) dex=$dexCount")
         return Verdict(bestTag, vendor, bestConf, tagsAll, reasons, dexCount)
     }
