@@ -879,24 +879,34 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this@MainActivity, "注入去除签名校验模块中…", Toast.LENGTH_SHORT).show()
                     val out = withContext(Dispatchers.IO) {
                         try {
-                            if (!com.yuntuoxiu.app.engine.SystemPatchEngine.assetReady()) {
-                                "❌ 缺少 SRPatch 资产\n需: /storage/emulated/0/MT2/apks/ytx-tools/srpatch/patch.dex"
-                            } else {
-                                val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}")
-                                val outApk = java.io.File(taskDir, "build/sigbypass.apk")
-                                val res = com.yuntuoxiu.app.engine.SystemPatchEngine.inject(
-                                    java.io.File(t.sourceApk), outApk) { }
-                                if (res.ok) {
-                                    "✅ 注入完成\n" +
-                                    "  patch.dex: ${res.injectedDex}\n" +
-                                    "  libSRPatch.so: ${res.injectedSo}\n" +
-                                    "  产物: ${res.outApk?.absolutePath}\n\n" +
-                                    "⚠️ 完整生效还需改 Manifest application:name\n" +
-                                    com.yuntuoxiu.app.engine.SystemPatchEngine.note()
-                                } else "❌ ${res.detail}"
+                            val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}")
+                            val outApk = java.io.File(taskDir, "build/sigbypass.apk")
+                            val srcApk = java.io.File(t.sourceApk)
+
+                            // ① 记录原始签名
+                            val rec = com.yuntuoxiu.app.engine.SigBypassEngine.apply(
+                                srcApk, t.lookupPackage) { }
+
+                            // ② 若 SRPatch 资产在，则静态注入
+                            val injectMsg = if (com.yuntuoxiu.app.engine.SystemPatchEngine.assetReady()) {
+                                val r = com.yuntuoxiu.app.engine.SystemPatchEngine.inject(srcApk, outApk) { }
+                                if (r.ok) "✅ 已注入 SRPatch（${r.outApk?.absolutePath}）"
+                                else "⚠️ 注入失败: ${r.detail}"
+                            } else "（无 SRPatch 资产，跳过静态注入）"
+
+                            buildString {
+                                append("去除签名校验:\n\n")
+                                append("① 原始签名记录:\n")
+                                append("   ${if (rec.ok) "✅" else "❌"} ${rec.detail}\n\n")
+                                append("② SRPatch 静态注入:\n")
+                                append("   $injectMsg\n\n")
+                                if (rec.ok) {
+                                    append("说明：已记录原始签名，目标 App 在云脱修沙箱内运行时\n")
+                                    append("     将自动读到原始签名 → 通过自校验。")
+                                }
                             }
                         } catch (e: Throwable) {
-                            "❌ 注入失败: ${e.message}"
+                            "❌ 处理失败: ${e.message}"
                         }
                     }
                     showResultDialog("去除签名校验", out)

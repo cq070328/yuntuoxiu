@@ -148,34 +148,46 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
     }
 
     /**
-     * 签名校验绕过（SRPatch 静态注入）。
-     * params: in_apk、out_apk?
+     * 去除签名校验（自动完成：记录原始签名 + 注入 SRPatch 模块）。
+     * params: in_apk、out_apk?、package?
      */
     private fun onLocalSigBypass(payload: ActionPayload): ActionResponse {
         val inApk = payload.params["in_apk"] as? String
             ?: return ActionResponse(false, "缺 in_apk")
+        val pkg = payload.params["package"] as? String
         val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$taskId")
         val outApk = (payload.params["out_apk"] as? String)?.let { java.io.File(it) }
             ?: java.io.File(taskDir, "build/sigbypass.apk")
 
-        if (!com.yuntuoxiu.app.engine.SystemPatchEngine.assetReady()) {
-            return ActionResponse(false,
-                "缺少 SRPatch 资产（ytx-tools/srpatch/patch.dex）",
-                mapOf("fail_code" to "SIGBYPASS_NO_ASSET"))
-        }
-
-        val res = com.yuntuoxiu.app.engine.SystemPatchEngine.inject(
-            java.io.File(inApk), outApk
+        // ① 记录原始签名（供沙箱运行时伪造）
+        val rec = com.yuntuoxiu.app.engine.SigBypassEngine.apply(
+            java.io.File(inApk), pkg
         ) { Log.i(TAG, "  $it") }
 
-        return if (res.ok) {
-            ActionResponse(true, res.detail,
-                mapOf("out_apk" to res.outApk?.absolutePath,
-                      "injected_dex" to res.injectedDex,
-                      "injected_so" to res.injectedSo))
+        // ② 注入 SRPatch 模块（静态路径，可选）
+        var injectDetail = ""
+        if (com.yuntuoxiu.app.engine.SystemPatchEngine.assetReady()) {
+            val res = com.yuntuoxiu.app.engine.SystemPatchEngine.inject(
+                java.io.File(inApk), outApk
+            ) { Log.i(TAG, "  $it") }
+            injectDetail = if (res.ok) "已注入 SRPatch 模块" else "注入失败: ${res.detail}"
         } else {
-            ActionResponse(false, res.detail, mapOf("fail_code" to "SIGBYPASS_FAIL"))
+            injectDetail = "未找到 SRPatch 资产（跳过静态注入）"
         }
+
+        val ok = rec.ok || injectDetail.contains("已注入")
+        return ActionResponse(
+            ok,
+            buildString {
+                append("去除签名校验:\n")
+                append("  ① 原始签名记录: ${if (rec.ok) "✅" else "❌"} ${rec.detail}\n")
+                append("  ② 静态注入: $injectDetail")
+            },
+            mapOf(
+                "recorded" to rec.ok,
+                "out_apk" to (if (injectDetail.contains("已注入")) outApk.absolutePath else null)
+            )
+        )
     }
 
     /**
