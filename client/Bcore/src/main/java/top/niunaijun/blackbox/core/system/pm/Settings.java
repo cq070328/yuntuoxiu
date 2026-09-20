@@ -147,6 +147,14 @@ import top.niunaijun.blackbox.utils.Slog;
             File appRootDir = BEnvironment.getAppRootDir();
             FileUtils.mkdirs(appRootDir);
             File[] apps = appRootDir.listFiles();
+            // ⭐ v2.0 修复：listFiles() 可能返回 null（目录不存在/不可读/SELinux 限制）
+            //   原代码直接 for-each 会 NPE → :black 进程崩溃
+            if (apps == null) {
+                android.util.Log.w("Settings", "scanPackage: appRootDir 无可读条目: "
+                        + appRootDir.getAbsolutePath() + " exists=" + appRootDir.exists()
+                        + " canRead=" + appRootDir.canRead());
+                return;
+            }
             for (File app : apps) {
                 if (!app.isDirectory()) {
                     continue;
