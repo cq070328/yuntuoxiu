@@ -52,10 +52,14 @@ object LocalRepairEngine {
     /**
      * 合并「dump 的 DEX」到「原 APK」，产出修复后的 APK。
      *
+     * v2.0：新增「先用 DexRepairEngine 修复 dump 的 dex」，
+     *       修复后再替换进 APK（magic/checksum/sha1）。
+     *
      * @param srcApk    原 APK
      * @param dexFiles  脱壳得到的 dex（按 classes.dex, classes2.dex ... 顺序排列）
      * @param outApk    输出 APK
      * @param cleanShell 是否清理壳 so/assets
+     * @param repairDex  是否先修复 dex（默认 true）
      * @param onProgress 进度回调
      * @return 结果统计（null 表示失败）
      */
@@ -64,6 +68,7 @@ object LocalRepairEngine {
         dexFiles: List<File>,
         outApk: File,
         cleanShell: Boolean = true,
+        repairDex: Boolean = true,
         onProgress: (String) -> Unit = {}
     ): Result? {
         if (!srcApk.isFile) {
@@ -77,21 +82,36 @@ object LocalRepairEngine {
 
         var removedShell = 0
         var replacedDex = 0
+        var repairedDex = 0
         var totalOut = 0L
 
         try {
+            // ⭐ v2.0：先修复所有 dex（magic/checksum/sha1）
+            val finalDexes: List<File> = if (repairDex) {
+                onProgress("修复 DEX（${dexFiles.size} 个）...")
+                val repaired = ArrayList<File>()
+                for (dex in dexFiles) {
+                    val outDex = File(dex.parentFile, "fixed_${dex.name}")
+                    val r = DexRepairEngine.repair(dex, outDex)
+                    if (r.ok) {
+                        repaired.add(outDex)
+                        repairedDex++
+                        onProgress("  ✓ ${dex.name}: ${r.detail}")
+                    } else {
+                        // 修复失败 → 用原始（不阻断）
+                        repaired.add(dex)
+                        onProgress("  ⚠️ ${dex.name} 修复失败，用原始: ${r.detail}")
+                    }
+                }
+                repaired
+            } else dexFiles
+
             onProgress("打开原 APK: ${srcApk.name}")
             val zin = ZipFile(srcApk)
             val entries = zin.entries().toList()
 
-            // 原 APK 里已有的 classes*.dex 名（用于替换判断）
-            val existingDexNames = entries
-                .map { it.name }
-                .filter { Regex("^classes\\d*\\.dex$").matches(File(it).name) }
-                .toMutableSet()
-
             outApk.parentFile?.mkdirs()
-            val zout = ZipOutputStream(FileOutputStream(outApk))
+            val zout = ZipOutputStream(java.io.FileOutputStream(outApk))
 
             // ---- 1. 复制原条目（替换 dex + 清壳）----
             for (e in entries) {
@@ -99,7 +119,7 @@ object LocalRepairEngine {
                 val low = name.lowercase()
                 val bn = low.substringAfterLast('/')
 
-                // 清壳判定
+                // 清壳判定（内置 + 策略表）
                 if (cleanShell && isShellEntry(bn, low)) {
                     removedShell++
                     continue
@@ -110,27 +130,21 @@ object LocalRepairEngine {
                     continue
                 }
 
-                // 复制（保持压缩方式；so/arsc 必须 STORED）
                 val data = zin.getInputStream(e).readBytes()
-                val ne = ZipEntry(name)
-                ne.time = e.time
-                // ZipEntry 无法直接指定 STORED，需用 size/crc 让 ZipOutputStream 自动选择；
-                // 这里用 setMethod 需反射/子类。简化：用自定义 StoredEntry。
                 val outEntry = if (low.endsWith(".so") || low.endsWith("resources.arsc"))
-                    StoredEntry(name, data) else ne
+                    StoredEntry(name, data) else ZipEntry(name).apply { time = e.time }
                 zout.putNextEntry(outEntry)
                 zout.write(data)
                 zout.closeEntry()
                 totalOut += data.size
             }
 
-            // ---- 2. 写入 dump 的 DEX（重命名为 classes.dex / classesN.dex）----
+            // ---- 2. 写入（已修复的）DEX ----
             var idx = 1
-            for (dex in dexFiles) {
+            for (dex in finalDexes) {
                 val dexName = if (idx == 1) "classes.dex" else "classes$idx.dex"
                 idx++
                 val data = dex.readBytes()
-                // 校验 dex magic
                 if (!looksLikeDex(data)) {
                     onProgress("跳过非法 dex: ${dex.name}")
                     continue
@@ -147,11 +161,11 @@ object LocalRepairEngine {
             zout.close()
             zin.close()
 
-            onProgress("重建完成: dex=$replacedDex 清壳=$removedShell 大小=${totalOut / 1024}KB")
+            onProgress("重建完成: dex=$replacedDex(修复$repairedDex) 清壳=$removedShell 大小=${totalOut / 1024}KB")
             return Result(outApk, replacedDex, removedShell, totalOut)
         } catch (t: Throwable) {
-            LogStore.e(TAG, "重建失败: ${t.message}")
-            onProgress("重建失败: ${t.message}")
+            LogStore.e(TAG, "重建失败: ${t.javaClass.simpleName}: ${t.message}")
+            onProgress("重建失败: ${t.javaClass.simpleName}: ${t.message}")
             return null
         }
     }
