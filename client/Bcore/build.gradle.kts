@@ -46,15 +46,9 @@ android {
         checkReleaseBuilds = false
         abortOnError = false
         warningsAsErrors = false
-        disable += setOf("UnusedResources", "RestrictedApi")
-        check += setOf("NewApi", "InlinedApi")
+        disable.addAll(listOf("UnusedResources", "RestrictedApi"))
+        check.addAll(listOf("NewApi", "InlinedApi"))
     }
-}
-
-tasks.withType<Javadoc> {
-    options.addStringOption("Xdoclint:none", "-quiet")
-    options.addStringOption("encoding", "UTF-8")
-    options.addStringOption("charSet", "UTF-8")
 }
 
 dependencies {
