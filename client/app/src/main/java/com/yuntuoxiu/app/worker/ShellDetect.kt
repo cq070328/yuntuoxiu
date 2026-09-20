@@ -28,21 +28,24 @@ object ShellDetect {
         val dexCount: Int
     )
 
-    /** ⭐ 内部 tag → 中文壳名（未命中厂商特征时的兜底显示） */
-    private val TAG_LABEL = mapOf(
-        "OVERALL_SHELL" -> "整体加固",
-        "EXTRACT_SHELL" -> "抽取壳",
-        "VMP" -> "VMP虚拟化",
-        "DEX_VM" -> "Dex-VM",
-        "DEX2C" -> "Dex2C",
-        "METASEC" -> "字节加固",
-        "SECSHELL" -> "腾讯御安全",
-        "NP" -> "NP加固",
-        "HEADER_ERASED" -> "Header擦除",
-        "CLOUD_INJECT" -> "云注入",
-        "NONE" -> "未加壳",
-        "UNKNOWN" -> "未知",
-    )
+    /** 内部 tag 到中文壳名（未命中厂商特征时的兜底显示） */
+    private fun tagLabel(tag: String): String {
+        return when (tag) {
+            "OVERALL_SHELL" -> "整体加固"
+            "EXTRACT_SHELL" -> "抽取壳"
+            "VMP" -> "VMP虚拟化"
+            "DEX_VM" -> "Dex-VM"
+            "DEX2C" -> "Dex2C"
+            "METASEC" -> "字节加固"
+            "SECSHELL" -> "腾讯御安全"
+            "NP" -> "NP加固"
+            "HEADER_ERASED" -> "Header擦除"
+            "CLOUD_INJECT" -> "云注入"
+            "NONE" -> "未加壳"
+            "UNKNOWN" -> "未知"
+            else -> tag
+        }
+    }
 
     // ---- 特征 so（正则, 标签, 说明, 权重）----
     private val SO_SIG: List<Array<Any>> = listOf(
@@ -345,7 +348,7 @@ object ShellDetect {
         }
 
         // ⭐ 真实厂商名：优先用厂商特征命中的 vendor，否则用 tag 中文名兜底
-        val vendor = matchedVendorName ?: TAG_LABEL[bestTag] ?: bestTag
+        val vendor = matchedVendorName ?: tagLabel(bestTag)
         LogStore.i(TAG, "壳识别: $bestTag / $vendor (${"%.2f".format(bestConf)}) dex=$dexCount")
         return Verdict(bestTag, vendor, bestConf, tagsAll, reasons, dexCount)
     }
