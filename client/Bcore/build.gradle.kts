@@ -41,14 +41,6 @@ android {
     buildFeatures {
         aidl = true
     }
-
-    lint {
-        checkReleaseBuilds = false
-        abortOnError = false
-        warningsAsErrors = false
-        disable.addAll(listOf("UnusedResources", "RestrictedApi"))
-        check.addAll(listOf("NewApi", "InlinedApi"))
-    }
 }
 
 dependencies {
