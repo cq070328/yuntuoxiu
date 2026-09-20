@@ -519,7 +519,7 @@ class MainActivity : AppCompatActivity() {
                 Triple("🔧", "本地修复", "清壳重组 + 签名（App 内）"),
                 Triple("🩹", "规则修补", "Manifest入口/反调试/壳串（本地）"),
                 Triple("📜", "日志诊断", "抓 logcat + 崩溃堆栈"),
-                Triple("🔓", "签名绕过", "注入 SRPatch（过自校验）"),
+                Triple("🔓", "去除签名校验", "注入 SRPatch（过自校验）"),
                 Triple("📋", "环境自检", "检查 Shizuku / 本地引擎"),
                 Triple("ℹ️", "工具用法说明", "各功能说明")
             )
@@ -858,7 +858,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 工具 7：签名绕过（SRPatch 静态注入） */
+    /** 工具 7：去除签名校验（SRPatch 静态注入） */
     private fun toolSigBypass() {
         lifecycleScope.launch {
             val tasks = withContext(Dispatchers.IO) {
@@ -871,12 +871,12 @@ class MainActivity : AppCompatActivity() {
             }
             val names = cands.map { it.displayName }.toTypedArray()
             showItemsDialog(
-                "签名绕过 · 选择任务",
+                "去除签名校验 · 选择任务",
                 names.map { Triple("", it, "") }
             ) { which ->
                 val t = cands[which]
                 lifecycleScope.launch {
-                    Toast.makeText(this@MainActivity, "注入签名绕过模块中…", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "注入去除签名校验模块中…", Toast.LENGTH_SHORT).show()
                     val out = withContext(Dispatchers.IO) {
                         try {
                             if (!com.yuntuoxiu.app.engine.SystemPatchEngine.assetReady()) {
@@ -899,7 +899,7 @@ class MainActivity : AppCompatActivity() {
                             "❌ 注入失败: ${e.message}"
                         }
                     }
-                    showResultDialog("签名绕过", out)
+                    showResultDialog("去除签名校验", out)
                 }
             }
         }

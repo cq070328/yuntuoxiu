@@ -7,10 +7,10 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 /**
- * SystemPatchEngine —— 签名校验绕过（SRPatch 能力集成，v2.0）
+ * SystemPatchEngine —— 去除签名校验（SRPatch 能力集成，v2.0）
  *
  * 原理（来自 SRPatch 逆向分析）：
- *   App 重签名后，运行时自校验签名会失败。本引擎把「签名绕过模块」静态注入 APK：
+ *   App 重签名后，运行时自校验签名会失败。本引擎把「去除签名校验模块」静态注入 APK：
  *     1) 放入 assets/patch.dex（Java Hook 代码）
  *     2) 放入 lib/arm64-v8a/libSRPatch.so（原生支持）
  *     3) 改 AndroidManifest 的 application:name → 壳入口（触发 com.srp.patch.Init）
@@ -36,7 +36,7 @@ object SystemPatchEngine {
     )
 
     /**
-     * 把签名绕过模块注入 APK。
+     * 把去除签名校验模块注入 APK。
      *
      * @param srcApk  源 APK
      * @param outApk  输出 APK
@@ -122,7 +122,7 @@ object SystemPatchEngine {
 
             onProgress("注入完成: dex=$injectedDex so=$injectedSo")
             return Result(true, outApk, injectedDex, injectedSo,
-                "已注入签名绕过模块（dex=$injectedDex so=$injectedSo）\n" +
+                "已注入去除签名校验模块（dex=$injectedDex so=$injectedSo）\n" +
                 "⚠️ 还需改 Manifest application:name 才能生效（见 note）")
         } catch (t: Throwable) {
             LogStore.e(TAG, "注入失败: ${t.message}")
@@ -138,7 +138,7 @@ object SystemPatchEngine {
 
     /** 说明（供 UI 展示） */
     fun note(): String = """
-签名绕过（SRPatch）说明：
+去除签名校验（SRPatch）说明：
 · 原理：Hook PMS，让 App 读到原始签名
 · 本机静态注入：assets/patch.dex + libSRPatch.so
 · 生效需：Manifest 的 application:name 指向壳入口
