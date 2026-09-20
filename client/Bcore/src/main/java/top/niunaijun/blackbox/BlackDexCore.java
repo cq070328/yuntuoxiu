@@ -61,9 +61,18 @@ public class BlackDexCore {
     }
 
     public InstallResult dumpDex(File file) {
+        android.util.Log.i(TAG, "dumpDex(File): 开始 installPackage " + file.getAbsolutePath());
         InstallResult installResult = BlackBoxCore.get().installPackage(file);
+        if (installResult == null) {
+            android.util.Log.e(TAG, "dumpDex(File): installPackage 返回 null（服务未就绪）");
+            return null;
+        }
+        android.util.Log.i(TAG, "dumpDex(File): install success=" + installResult.success
+                + " err=" + installResult.error + " pkg=" + installResult.packageName);
         if (installResult.success) {
+            android.util.Log.i(TAG, "dumpDex(File): 调用 launchApk " + installResult.packageName);
             boolean b = BlackBoxCore.get().launchApk(installResult.packageName);
+            android.util.Log.i(TAG, "dumpDex(File): launchApk 返回 " + b);
             if (!b) {
                 BlackBoxCore.get().uninstallPackage(installResult.packageName);
                 return null;
