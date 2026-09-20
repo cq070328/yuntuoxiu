@@ -203,9 +203,26 @@ public class BlackBoxCore extends ClientConfiguration {
         }
         Bundle bundle = new Bundle();
         bundle.putString("_VM_|_server_name_", name);
-        Bundle vm = ProviderCall.callSafely(ProxyManifest.getBindProvider(), "VM", null, bundle);
-        assert vm != null;
+        Bundle vm = null;
+        try {
+            vm = ProviderCall.callSafely(ProxyManifest.getBindProvider(), "VM", null, bundle);
+        } catch (Throwable t) {
+            android.util.Log.e("BlackBoxCore", "getService(" + name + ") callSafely 异常: "
+                    + t.getClass().getName() + ": " + t.getMessage(), t);
+            throw new RuntimeException("BlackBox 服务调用失败(" + name + "): "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage(), t);
+        }
+        if (vm == null) {
+            android.util.Log.e("BlackBoxCore", "getService(" + name + ") 返回 null "
+                    + "(provider=" + ProxyManifest.getBindProvider() + ")");
+            throw new RuntimeException("BlackBox 服务未就绪(" + name
+                    + ")：Provider(" + ProxyManifest.getBindProvider()
+                    + ") 无法拉起，可能是 :black 进程启动失败");
+        }
         binder = BundleCompat.getBinder(vm, "_VM_|_server_");
+        if (binder == null) {
+            throw new RuntimeException("BlackBox 服务未就绪(" + name + ")：binder 为 null");
+        }
         mServices.put(name, binder);
         return binder;
     }

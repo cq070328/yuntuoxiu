@@ -84,6 +84,24 @@
              特殊实例化（class 需 extends IYunTuoXiuService.Stub），不走普通组件绑定。
              此前误加 <service> 声明，反而干扰绑定。 -->
 
+        <!-- ⭐ v2.0：BlackBox 沙箱核心组件（脱壳引擎必需）
+             从 Bcore 的 Manifest 合并失败，显式声明关键组件 -->
+        <provider
+            android:name="top.niunaijun.blackbox.core.system.SystemCallProvider"
+            android:authorities="${applicationId}.blackbox.SystemCallProvider"
+            android:exported="false"
+            android:process="@string/black_box_service_name" />
+
+        <service
+            android:name="top.niunaijun.blackbox.core.system.DaemonService"
+            android:exported="false"
+            android:process="@string/black_box_service_name" />
+
+        <service
+            android:name="top.niunaijun.blackbox.core.system.DaemonService$DaemonInnerService"
+            android:exported="false"
+            android:process="@string/black_box_service_name" />
+
         <!-- ⭐ v1.6.4 FileProvider：任务详情页「一键安装」用系统安装器 -->
         <provider
             android:name="androidx.core.content.FileProvider"
