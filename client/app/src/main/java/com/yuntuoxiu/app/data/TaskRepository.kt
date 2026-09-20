@@ -209,6 +209,20 @@ object TaskRepository {
             File(taskDir, "build").mkdirs()
             File(logsRoot, taskId).mkdirs()
 
+            // ⭐ v2.0：创建任务时同步做壳识别（写入 shellTag/shellConfidence）
+            var shellTag: String? = null
+            var shellConf: Double? = null
+            var shellReasons: List<String> = emptyList()
+            try {
+                val v = com.yuntuoxiu.app.worker.ShellDetect.detect(finalApk.absolutePath)
+                shellTag = v.tag
+                shellConf = v.confidence
+                shellReasons = v.reasons
+                Log.i(TAG, "壳识别: ${v.tag} (${"%.2f".format(v.confidence)})")
+            } catch (t: Throwable) {
+                Log.w(TAG, "壳识别失败: ${t.message}")
+            }
+
             val meta = TaskMetaView(
                 taskId = taskId,
                 state = "CREATED",
@@ -216,13 +230,16 @@ object TaskRepository {
                 packageName = pkg,
                 allowAutoDegrade = allowAutoDegrade,
                 clientAbi = "arm64-v8a",
+                shellTag = shellTag,
+                shellConfidence = shellConf,
+                shellReasons = shellReasons,
                 createdAt = now,
                 updatedAt = now
             )
             File(taskDir, "meta/task_meta.json").writeText(gson.toJson(meta))
             File(logsRoot, "$taskId/task.log").writeText("")
 
-            Log.i(TAG, "已本地创建任务: $taskId (${finalApk.absolutePath}, pkg=$pkg)")
+            Log.i(TAG, "已本地创建任务: $taskId (${finalApk.absolutePath}, pkg=$pkg, 壳=$shellTag)")
             SubmitResult.Success(taskId)
         } catch (e: Exception) {
             SubmitResult.Failure(e.message ?: "提交失败")
