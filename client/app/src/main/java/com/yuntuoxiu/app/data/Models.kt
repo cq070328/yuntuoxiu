@@ -61,6 +61,8 @@ object ActionType {
     const val LOCAL_PATCH = "LOCAL_PATCH"
     /** 本地日志/崩溃捕获（logcat） */
     const val LOCAL_LOG_CAPTURE = "LOCAL_LOG_CAPTURE"
+    /** 签名校验绕过（SRPatch 静态注入） */
+    const val LOCAL_SIG_BYPASS = "LOCAL_SIG_BYPASS"
 }
 
 /**

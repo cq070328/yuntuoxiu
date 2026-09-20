@@ -519,6 +519,7 @@ class MainActivity : AppCompatActivity() {
                 Triple("🔧", "本地修复", "清壳重组 + 签名（App 内）"),
                 Triple("🩹", "规则修补", "Manifest入口/反调试/壳串（本地）"),
                 Triple("📜", "日志诊断", "抓 logcat + 崩溃堆栈"),
+                Triple("🔓", "签名绕过", "注入 SRPatch（过自校验）"),
                 Triple("📋", "环境自检", "检查 Shizuku / 本地引擎"),
                 Triple("ℹ️", "工具用法说明", "各功能说明")
             )
@@ -530,8 +531,9 @@ class MainActivity : AppCompatActivity() {
                 3 -> toolCloudBuild()
                 4 -> toolSmaliPatch()
                 5 -> toolLogCapture()
-                6 -> toolEnvCheck()
-                7 -> showToolsHelp()
+                6 -> toolSigBypass()
+                7 -> toolEnvCheck()
+                8 -> showToolsHelp()
             }
         }
     }
@@ -853,6 +855,53 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             showResultDialog("日志诊断", out)
+        }
+    }
+
+    /** 工具 7：签名绕过（SRPatch 静态注入） */
+    private fun toolSigBypass() {
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
+            }
+            val cands = tasks.filter { it.sourceApk.isNotBlank() && java.io.File(it.sourceApk).isFile }
+            if (cands.isEmpty()) {
+                Toast.makeText(this@MainActivity, "无可用任务（需有原 APK）", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = cands.map { it.displayName }.toTypedArray()
+            showItemsDialog(
+                "签名绕过 · 选择任务",
+                names.map { Triple("", it, "") }
+            ) { which ->
+                val t = cands[which]
+                lifecycleScope.launch {
+                    Toast.makeText(this@MainActivity, "注入签名绕过模块中…", Toast.LENGTH_SHORT).show()
+                    val out = withContext(Dispatchers.IO) {
+                        try {
+                            if (!com.yuntuoxiu.app.engine.SystemPatchEngine.assetReady()) {
+                                "❌ 缺少 SRPatch 资产\n需: /storage/emulated/0/MT2/apks/ytx-tools/srpatch/patch.dex"
+                            } else {
+                                val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${t.taskId}")
+                                val outApk = java.io.File(taskDir, "build/sigbypass.apk")
+                                val res = com.yuntuoxiu.app.engine.SystemPatchEngine.inject(
+                                    java.io.File(t.sourceApk), outApk) { }
+                                if (res.ok) {
+                                    "✅ 注入完成\n" +
+                                    "  patch.dex: ${res.injectedDex}\n" +
+                                    "  libSRPatch.so: ${res.injectedSo}\n" +
+                                    "  产物: ${res.outApk?.absolutePath}\n\n" +
+                                    "⚠️ 完整生效还需改 Manifest application:name\n" +
+                                    com.yuntuoxiu.app.engine.SystemPatchEngine.note()
+                                } else "❌ ${res.detail}"
+                            }
+                        } catch (e: Throwable) {
+                            "❌ 注入失败: ${e.message}"
+                        }
+                    }
+                    showResultDialog("签名绕过", out)
+                }
+            }
         }
     }
 

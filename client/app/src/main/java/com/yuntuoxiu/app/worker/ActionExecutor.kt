@@ -53,6 +53,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                 ActionType.LOCAL_ENGINE_CHECK -> onLocalEngineCheck(payload)
                 ActionType.LOCAL_PATCH -> onLocalPatch(payload)
                 ActionType.LOCAL_LOG_CAPTURE -> onLocalLogCapture(payload)
+                ActionType.LOCAL_SIG_BYPASS -> onLocalSigBypass(payload)
                 else -> ActionResponse(false, "未知 action: ${payload.action}")
             }
         } catch (e: Exception) {
@@ -143,6 +144,37 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                       "crash" to res.crashSnippet.take(2000)))
         } else {
             ActionResponse(false, res.detail, mapOf("fail_code" to "LOG_CAPTURE_FAIL"))
+        }
+    }
+
+    /**
+     * 签名校验绕过（SRPatch 静态注入）。
+     * params: in_apk、out_apk?
+     */
+    private fun onLocalSigBypass(payload: ActionPayload): ActionResponse {
+        val inApk = payload.params["in_apk"] as? String
+            ?: return ActionResponse(false, "缺 in_apk")
+        val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$taskId")
+        val outApk = (payload.params["out_apk"] as? String)?.let { java.io.File(it) }
+            ?: java.io.File(taskDir, "build/sigbypass.apk")
+
+        if (!com.yuntuoxiu.app.engine.SystemPatchEngine.assetReady()) {
+            return ActionResponse(false,
+                "缺少 SRPatch 资产（ytx-tools/srpatch/patch.dex）",
+                mapOf("fail_code" to "SIGBYPASS_NO_ASSET"))
+        }
+
+        val res = com.yuntuoxiu.app.engine.SystemPatchEngine.inject(
+            java.io.File(inApk), outApk
+        ) { Log.i(TAG, "  $it") }
+
+        return if (res.ok) {
+            ActionResponse(true, res.detail,
+                mapOf("out_apk" to res.outApk?.absolutePath,
+                      "injected_dex" to res.injectedDex,
+                      "injected_so" to res.injectedSo))
+        } else {
+            ActionResponse(false, res.detail, mapOf("fail_code" to "SIGBYPASS_FAIL"))
         }
     }
 
