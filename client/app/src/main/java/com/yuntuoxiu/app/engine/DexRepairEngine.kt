@@ -90,11 +90,11 @@ object DexRepairEngine {
             // 4) 校验 header_size / endian
             val headerSize = readU4(data, 36)
             val endianTag = readU4(data, 40)
-            if (headerSize != 0x70) {
+            if (headerSize != 0x70L) {
                 // 非标准 header，可能损坏
                 LogStore.w(TAG, "异常 header_size=0x${headerSize.toString(16)}")
             }
-            if (endianTag != 0x12345678) {
+            if (endianTag != 0x12345678L) {
                 LogStore.w(TAG, "异常 endian_tag=0x${endianTag.toString(16)}")
             }
 

@@ -58,7 +58,7 @@ object SigBypassEngine {
         }
     }
 
-    /** 提取 APK 的签名证书（通过 zip 读 META-INF/*.RSA/*.DSA/*.EC） */
+    /** 提取 APK 的签名证书（通过 zip 读 META-INF 下的 .RSA/.DSA/.EC） */
     private fun extractSignatures(apk: File): List<X509Certificate> {
         val out = ArrayList<X509Certificate>()
         try {
