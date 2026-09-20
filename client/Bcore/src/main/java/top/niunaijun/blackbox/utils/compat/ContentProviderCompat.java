@@ -30,12 +30,26 @@ public class ContentProviderCompat {
 
 
     private static ContentProviderClient acquireContentProviderClient(Context context, Uri uri) {
+        // ⭐ v2.0 Android 16 修复：
+        //   A14+ 起 acquireUnstableContentProviderClient 被严格限制（A16 更严），
+        //   返回 null 且**不会拉起 Provider 进程** → :black 进程无法启动。
+        //   改为：优先用「稳定客户端」acquireContentProviderClient（会正常拉起 Provider 进程）。
+        if (VERSION.SDK_INT >= 34) {
+            try {
+                ContentProviderClient c = context.getContentResolver()
+                        .acquireContentProviderClient(uri);
+                if (c != null) return c;
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
+        }
+        // 回退：老逻辑（unstable）
         try {
             if (VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
                 return context.getContentResolver().acquireUnstableContentProviderClient(uri);
             }
             return context.getContentResolver().acquireContentProviderClient(uri);
-        } catch (SecurityException e) {
+        } catch (Throwable e) {
             e.printStackTrace();
         }
         return null;
@@ -68,10 +82,25 @@ public class ContentProviderCompat {
     }
 
     private static ContentProviderClient acquireContentProviderClient(Context context, String name) {
-        if (VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            return context.getContentResolver().acquireUnstableContentProviderClient(name);
+        // ⭐ v2.0 Android 16 修复：同 Uri 版本
+        if (VERSION.SDK_INT >= 34) {
+            try {
+                ContentProviderClient c = context.getContentResolver()
+                        .acquireContentProviderClient(name);
+                if (c != null) return c;
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
         }
-        return context.getContentResolver().acquireContentProviderClient(name);
+        try {
+            if (VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+                return context.getContentResolver().acquireUnstableContentProviderClient(name);
+            }
+            return context.getContentResolver().acquireContentProviderClient(name);
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
+        return null;
     }
 
     private static void releaseQuietly(ContentProviderClient client) {
