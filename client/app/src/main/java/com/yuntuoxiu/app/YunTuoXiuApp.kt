@@ -61,21 +61,34 @@ class YunTuoXiuApp : Application() {
         super.onCreate()
         instance = this
 
-        // ⭐ v2.0：初始化本地脱壳引擎（BlackBox/BlackDex）
+        // ⚡ v2.0 启动优化：主线程只做「零成本」的事，重活全部丢后台线程。
+        //    （否则 loadLibrary/doCreate/Shizuku.init 会阻塞主线程 → 白屏/黑屏）
+
+        // 后台线程：引擎初始化 + 自检 + Shizuku + Worker
+        Thread(::initInBackground, "ytx-init").apply {
+            priority = Thread.MIN_PRIORITY
+            isDaemon = true
+        }.start()
+    }
+
+    /** 后台初始化（不阻塞 UI） */
+    private fun initInBackground() {
         try {
+            // 1. 本地脱壳引擎（loadLibrary + BlackBox 初始化，最耗时）
             initUnpackEngine()
         } catch (t: Throwable) {
             LogStore.e("YunTuoXiuApp", "脱壳引擎初始化失败: ${t.message}")
         }
 
-        // 初始化 Shizuku 客户端：注册生命周期监听（断连/权限回收自动上报）
         try {
+            // 2. Shizuku 客户端
             ShizukuClient.init(this)
         } catch (t: Throwable) {
             LogStore.e("YunTuoXiuApp", "ShizukuClient.init 失败: ${t.message}")
         }
-        // 【新增】App 启动即自动启动 Worker（无需手动点）
+
         try {
+            // 3. 启动 Worker 前台服务
             val intent = android.content.Intent(this,
                 com.yuntuoxiu.app.worker.WorkerService::class.java)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -87,22 +100,6 @@ class YunTuoXiuApp : Application() {
         } catch (t: Throwable) {
             LogStore.e("YunTuoXiuApp", "自动启动 Worker 失败: ${t.message}")
         }
-
-        // 【v2.0】本地引擎自检（在后台线程，不阻塞启动）
-        // ⚠️ 已移除对 NPatch/脱壳模块/注入器 的检查（v2.0 全本地化，不再需要）
-        Thread {
-            try {
-                val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(this)
-                if (chk.available) {
-                    LogStore.i("YunTuoXiuApp", "✅ 本地引擎可用（${chk.abi}）")
-                } else {
-                    LogStore.w("YunTuoXiuApp",
-                        "本地引擎问题: ${chk.problems.joinToString("; ")}")
-                }
-            } catch (t: Throwable) {
-                LogStore.e("YunTuoXiuApp", "本地引擎自检失败: ${t.message}")
-            }
-        }.start()
     }
 
     override fun onTerminate() {

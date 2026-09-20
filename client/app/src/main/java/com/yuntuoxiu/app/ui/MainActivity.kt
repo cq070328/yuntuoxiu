@@ -196,9 +196,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        requestPermissionsIfNeeded()
+        // ⚡ v2.0：权限请求延迟到「界面完全显示后」弹起（onWindowFocusChanged 首帧）
+        //    （不在 onCreate 里弹，避免阻塞白屏）
         startAutoRefresh()
         LogStore.i(TAG, "MainActivity.onCreate 完成")
+    }
+
+    /** 是否已请求过权限（只弹一次） */
+    private var permissionRequested = false
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // 界面获得焦点（已完全显示）→ 弹权限
+        if (hasFocus && !permissionRequested) {
+            permissionRequested = true
+            try { requestPermissionsIfNeeded() } catch (_: Throwable) {}
+        }
     }
 
     override fun onResume() {
@@ -208,8 +221,9 @@ class MainActivity : AppCompatActivity() {
         else "⚠️ Shizuku 未授权"
         findViewById<TextView>(R.id.tvShizukuBadge)?.setTextColor(
             if (ShizukuClient.isGranted()) 0xFF3FB950.toInt() else 0xFFF85149.toInt())
+        // ⚡ v2.0：刷新全部走协程（内部已用 lifecycleScope），不阻塞 onResume
         refreshEngineStatus()
-        refreshBackendStatus()   // v1.6：后端状态
+        refreshBackendStatus()
         refreshTasks()
         refreshLog()
     }
@@ -453,7 +467,8 @@ class MainActivity : AppCompatActivity() {
                     // ③ 本地签名
                     log.append("[3/3] 本地签名...\n")
                     val signed = File(taskDir, "build/signed.apk")
-                    val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(repaired, signed, null)
+                    val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(
+                        repaired, signed, null, this@MainActivity)
                     if (!sr.ok) {
                         log.append("      ⚠️ 签名失败: ${sr.detail}\n")
                         log.append("      修复产物: ${repaired.absolutePath}\n")
@@ -698,7 +713,7 @@ class MainActivity : AppCompatActivity() {
                             // 签名
                             val signed = File(taskDir, "build/signed.apk")
                             val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(
-                                repaired, signed, null
+                                repaired, signed, null, this@MainActivity
                             )
                             if (!sr.ok) {
                                 "⚠️ 修复成功但签名失败: ${sr.detail}\n修复产物: ${repaired.absolutePath}"
@@ -959,7 +974,7 @@ class MainActivity : AppCompatActivity() {
             "选择 APK 来源",
             listOf(
                 Triple("📁", "从文件选择", "浏览设备上的 .apk 文件"),
-                Triple("📱", "从已安装应用选择", "列出第三方应用（带图标/搜索）")
+                Triple("📱", "从已安装应用选择", "列出第三方应用")
             )
         ) { which ->
             if (which == 0) pickApkFromFile() else pickApkFromInstalled()
@@ -1354,16 +1369,31 @@ class MainActivity : AppCompatActivity() {
                 LogStore.e(TAG, "请求权限失败: ${t.message}")
             }
         }
+
+        // ⚠️ v2.0 修复：不再自动跳「所有文件访问」设置页
+        //    （旧逻辑在启动时 startActivity 跳设置 → 用户以为白屏/闪退）
+        //    改为：提示用户，由用户点「授权」按钮时再跳。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
             !Environment.isExternalStorageManager()) {
-            LogStore.w(TAG, "需要「所有文件访问权限」")
+            LogStore.w(TAG, "未授予「所有文件访问权限」；用户可点 Shizuku 授权按钮后处理")
+            // 仅在主界面显示提示，不自动跳转
             try {
-                startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
-                })
-            } catch (t: Throwable) {
-                LogStore.e(TAG, "跳转权限设置失败: ${t.message}")
-            }
+                Toast.makeText(this,
+                    "建议授予「所有文件访问权限」以读写工作区",
+                    Toast.LENGTH_LONG).show()
+            } catch (_: Throwable) {}
+        }
+    }
+
+    /** 跳转「所有文件访问」设置页（由用户主动触发） */
+    private fun openAllFilesAccessSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                data = Uri.parse("package:$packageName")
+            })
+        } catch (t: Throwable) {
+            LogStore.e(TAG, "跳转权限设置失败: ${t.message}")
         }
     }
 

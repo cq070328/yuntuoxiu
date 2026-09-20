@@ -220,7 +220,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
             ?: java.io.File(taskDir, "build/signed.apk")
 
         val res = com.yuntuoxiu.app.engine.LocalApkSigner.sign(
-            java.io.File(inApk), outApk, null
+            java.io.File(inApk), outApk, null, context
         ) { Log.i(TAG, "  $it") }
         return if (res.ok) {
             ActionResponse(true, "本地签名完成", mapOf("out_apk" to res.outApk?.absolutePath))
@@ -455,7 +455,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
         ) ?: return ActionResponse(false, "本地重组失败", mapOf("fail_code" to "BUILD_FAIL"))
 
         val signed = File(taskDir, "build/signed.apk")
-        val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(repaired, signed, null)
+        val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(repaired, signed, null, context)
         return if (sr.ok) {
             ActionResponse(true, "本地构建完成（修复+签名）",
                 mapOf("out_apk" to signed.absolutePath,
