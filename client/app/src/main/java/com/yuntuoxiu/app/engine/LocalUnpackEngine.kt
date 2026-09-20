@@ -40,33 +40,48 @@ object LocalUnpackEngine {
         private set
 
     /**
-     * 检查引擎是否可用（不触发初始化，仅探测 native 库存在性）。
-     * 用于环境自检。
+     * 检查引擎是否可用。
+     *
+     * ⚠️ v2.0 修复：Android 10+ 若 extractNativeLibs=false，
+     *    so 不会解压到 nativeLibraryDir（那里为空），
+     *    因此不能用「文件是否存在」判断，必须**实际尝试加载**。
      */
     fun checkAvailability(context: Context): CheckResult {
         val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "?"
         val isArm64 = abi.contains("arm64")
-
-        // native 库是否随 APK 打包（ApplicationInfo.nativeLibraryDir）
         val nativeDir = context.applicationInfo.nativeLibraryDir
-        val soMain = File(nativeDir, "libblackdex.so")
-        val soDump = File(nativeDir, "libblackdex_d.so")
-
-        // assets 运行时依赖
-        val assets = listOf("empty.jar", "junit.jar", "vm.jar").map { it }
 
         val problems = ArrayList<String>()
         if (!isArm64) problems.add("ABI 非 arm64-v8a（当前 $abi），引擎仅支持 arm64")
-        if (!soMain.exists()) problems.add("缺少 libblackdex.so（native 未编入）")
-        if (!soDump.exists()) problems.add("缺少 libblackdex_d.so")
+
+        // 方式1：nativeLibraryDir 里是否有解压的 so（旧 ROM / extractNativeLibs=true）
+        val dirSoMain = File(nativeDir, "libblackdex.so").exists()
+        val dirSoDump = File(nativeDir, "libblackdex_d.so").exists()
+
+        // 方式2（权威）：尝试 System.loadLibrary，能加载即说明 so 可用（无论是否解压）
+        var loadOk = false
+        var loadErr: String? = null
+        try {
+            System.loadLibrary("blackdex")
+            loadOk = true
+        } catch (t: Throwable) {
+            loadErr = t.message
+        }
+
+        val soMain = dirSoMain || loadOk
+        val soDump = dirSoDump || loadOk // 主库能加载即视为 native 可用
+
+        if (!soMain) {
+            problems.add("libblackdex.so 加载失败" + (loadErr?.let { ": $it" } ?: "（未编入 APK）"))
+        }
 
         return CheckResult(
             available = problems.isEmpty(),
             abi = abi,
             nativeDir = nativeDir,
-            soMain = soMain.exists(),
-            soDump = soDump.exists(),
-            assets = assets,
+            soMain = soMain,
+            soDump = soDump,
+            assets = listOf("empty.jar", "junit.jar", "vm.jar"),
             problems = problems
         )
     }

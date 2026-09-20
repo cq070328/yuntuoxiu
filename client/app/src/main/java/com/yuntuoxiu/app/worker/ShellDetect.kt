@@ -153,6 +153,28 @@ object ShellDetect {
                     }
                 }
 
+                // 2b) ⭐ v2.0：扩展特征库（47 厂商样本库）
+                //     逐个厂商匹配 so 名 + assets 名（精确名匹配，权重 0.85）
+                for (v in ShellSignatures.VENDORS) {
+                    var hitName: String? = null
+                    for (so in v.soNames) {
+                        if (entries.any { it.substringAfterLast('/') == so }) {
+                            hitName = so; break
+                        }
+                    }
+                    if (hitName == null) {
+                        for (a in v.assetNames) {
+                            if (entries.any { it.substringAfterLast('/') == a ||
+                                    it.equals("assets/$a", true) }) {
+                                hitName = a; break
+                            }
+                        }
+                    }
+                    if (hitName != null) {
+                        bump(v.tag, 0.85, "${v.vendor} 特征: $hitName")
+                    }
+                }
+
                 // 3) DEX 启发式
                 val dexEntries = entries.filter {
                     Regex("^classes\\d*\\.dex$").matches(File(it).name)

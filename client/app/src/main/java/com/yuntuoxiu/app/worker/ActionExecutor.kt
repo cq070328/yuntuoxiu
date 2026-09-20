@@ -51,6 +51,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                 ActionType.LOCAL_SIGN -> onLocalSign(payload)
                 ActionType.LOCAL_ALL -> onLocalAll(payload)
                 ActionType.LOCAL_ENGINE_CHECK -> onLocalEngineCheck(payload)
+                ActionType.LOCAL_PATCH -> onLocalPatch(payload)
                 else -> ActionResponse(false, "未知 action: ${payload.action}")
             }
         } catch (e: Exception) {
@@ -84,6 +85,43 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
             "engine_ready" to ready,
             "problems" to chk.problems
         ))
+    }
+
+    /**
+     * 本地规则化修补（Manifest 入口替换 / 反调试串清理 / 壳 so+assets 清理）。
+     * 对应原版「正则替换」能力，v2.0 纯 Kotlin 本地化。
+     *
+     * params:
+     *   in_apk        源 APK
+     *   out_apk?      输出（默认 tasks/<id>/build/patched.apk）
+     *   real_app?     真实 Application 类名（不传则自动推断）
+     *   clean_manifest? 默认 true
+     *   clean_anti_debug? 默认 true
+     */
+    private fun onLocalPatch(payload: ActionPayload): ActionResponse {
+        val inApk = payload.params["in_apk"] as? String
+            ?: return ActionResponse(false, "缺 in_apk")
+        val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$taskId")
+        val outApk = (payload.params["out_apk"] as? String)?.let { java.io.File(it) }
+            ?: java.io.File(taskDir, "build/patched.apk")
+        val realApp = payload.params["real_app"] as? String
+        val cleanManifest = (payload.params["clean_manifest"] as? Boolean) ?: true
+        val cleanAnti = (payload.params["clean_anti_debug"] as? Boolean) ?: true
+
+        val res = com.yuntuoxiu.app.engine.LocalSmaliPatcher.patch(
+            java.io.File(inApk), outApk, realApp, cleanManifest, cleanAnti
+        ) { Log.i(TAG, "  $it") }
+
+        return if (res.ok) {
+            ActionResponse(true, "本地修补完成: ${res.detail}",
+                mapOf("out_apk" to res.outApk?.absolutePath,
+                      "manifest_changed" to res.manifestChanged,
+                      "removed_so" to res.removedShellSo,
+                      "removed_assets" to res.removedShellAssets,
+                      "anti_debug_cleaned" to res.antiDebugCleaned))
+        } else {
+            ActionResponse(false, res.detail, mapOf("fail_code" to "PATCH_FAIL"))
+        }
     }
 
     /**

@@ -57,6 +57,8 @@ object ActionType {
     const val LOCAL_ALL = "LOCAL_ALL"
     /** 本地引擎自检 */
     const val LOCAL_ENGINE_CHECK = "LOCAL_ENGINE_CHECK"
+    /** 本地规则化修补（Manifest/反调试/壳串，正则替换） */
+    const val LOCAL_PATCH = "LOCAL_PATCH"
 }
 
 /**

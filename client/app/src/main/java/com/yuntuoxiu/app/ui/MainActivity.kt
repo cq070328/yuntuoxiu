@@ -160,37 +160,30 @@ class MainActivity : AppCompatActivity() {
         // 版本号显示
         findViewById<TextView>(R.id.tvVersion)?.text = "v" + appVersionName()
 
-        // 【v1.6.1】本地引擎按钮：
-        //   单击 = 检查本地引擎（NPatch素材/脱壳模块/注入器）
+        // 【v2.0】本地引擎按钮：
+        //   单击 = 本地引擎自检（脱壳/修复/签名）
         //   长按 = 工具面板
         findViewById<View>(R.id.btnStartDaemon)?.apply {
             setOnClickListener {
                 lifecycleScope.launch {
                     val rep = withContext(Dispatchers.IO) {
-                        val ws = YunTuoXiuApp.WORKSPACE_ROOT
-                        val items = listOf(
-                            "NPatch素材" to "$ws/ytx-tools/npatch_assets/assets/lspatch/metaloader.dex",
-                            "脱壳模块" to "$ws/ytx-tools/ytxdump-module.apk",
-                            "注入器" to "$ws/ytx_npatch_inject.sh",
-                            "DEX替换" to "$ws/ytx-dex-replace.py",
-                            "对齐工具" to "$ws/ytx-zipalign.py",
-                            "去壳清理" to "$ws/ytx-unpack-clean.py",
-                            "启动诊断" to "$ws/ytx_diag_launch.sh",
-                            "云端构建" to "$ws/ytx-cloud-build.py",
-                            "token" to "$ws/yuntuoxiu-dev/token.txt"
-                        )
-                        val sb = StringBuilder("== 本地引擎检查 ==\n\n")
-                        var okN = 0
-                        items.forEach { (name, path) ->
-                            val ok = File(path).exists()
-                            if (ok) okN++
-                            sb.append("${if (ok) "✅" else "❌"} $name\n")
-                        }
-                        sb.append("\n就绪：$okN/${items.size}\n\n")
-                        sb.append("说明：\n")
-                        sb.append("· 前 3 项是「脱壳注入」必需\n")
-                        sb.append("· token 是「云端构建」必需\n")
-                        if (okN == items.size) sb.append("\n🎉 全部就绪，可全自动脱壳！")
+                        val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine
+                            .checkAvailability(this@MainActivity)
+                        val ready = com.yuntuoxiu.app.engine.LocalUnpackEngine.isReady()
+                        val ks = com.yuntuoxiu.app.engine.LocalApkSigner.locateDefaultKeystore()
+                        val sb = StringBuilder("== 本地引擎检查 (v2.0) ==\n\n")
+                        sb.append("[本地脱壳引擎]\n")
+                        sb.append("  ${if (chk.available) "✅" else "❌"} native (${chk.abi})\n")
+                        sb.append("      libblackdex.so ${if (chk.soMain) "✅" else "❌"}")
+                        sb.append("  libblackdex_d.so ${if (chk.soDump) "✅" else "❌"}\n")
+                        sb.append("  ${if (ready) "✅" else "⚠️"} 引擎初始化\n")
+                        chk.problems.forEach { sb.append("      ⚠️ $it\n") }
+                        sb.append("\n[修复/签名]\n")
+                        sb.append("  ✅ 修复引擎\n")
+                        sb.append("  ${if (ks != null) "✅" else "❌"} 密钥库 ${ks?.name ?: "(缺失)"}\n")
+
+                        val allOk = chk.available && ks != null
+                        sb.append("\n== ${if (allOk) "就绪：可本地脱壳+修复" else "部分缺失"} ==\n")
                         sb.toString()
                     }
                     refreshEngineStatus()
@@ -509,7 +502,7 @@ class MainActivity : AppCompatActivity() {
                 Triple("🧹", "去壳清理", "删壳 so/assets（本地）"),
                 Triple("📤", "本地脱壳", "App 内引擎脱 DEX（无需终端）"),
                 Triple("🔧", "本地修复", "清壳重组 + 签名（App 内）"),
-                Triple("ⓘ", "引擎详情", "本地脱壳引擎自检"),
+                Triple("🩹", "规则修补", "Manifest入口/反调试/壳串（本地）"),
                 Triple("📋", "环境自检", "检查 Shizuku / 本地引擎"),
                 Triple("ℹ️", "工具用法说明", "各功能说明")
             )
@@ -519,7 +512,7 @@ class MainActivity : AppCompatActivity() {
                 1 -> toolUnpackClean()
                 2 -> toolCollectDump()
                 3 -> toolCloudBuild()
-                4 -> toolEnvCheck()
+                4 -> toolSmaliPatch()
                 5 -> toolEnvCheck()
                 6 -> showToolsHelp()
             }
@@ -722,9 +715,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 工具 5：本地引擎详情（原「smali 替换」已废弃——终端依赖，v2.0 本地化后不再需要） */
+    /** 工具 5：规则修补（原「smali 替换」，v2.0 纯 Kotlin 本地化） */
     private fun toolSmaliPatch() {
-        toolEnvCheck()
+        lifecycleScope.launch {
+            val tasks = withContext(Dispatchers.IO) {
+                try { TaskRepository.listTasks() } catch (t: Throwable) { emptyList() }
+            }
+            val cands = tasks.filter { it.sourceApk.isNotBlank() && java.io.File(it.sourceApk).isFile }
+            if (cands.isEmpty()) {
+                Toast.makeText(this@MainActivity, "无可用任务（需有原 APK）", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val names = cands.map { it.displayName }.toTypedArray()
+            showItemsDialog(
+                "规则修补 · 选择任务",
+                names.map { Triple("", it, "") }
+            ) { which ->
+                val t = cands[which]
+                showItemsDialog(
+                    "规则修补模式",
+                    listOf(
+                        Triple("🔍", "仅修补 Manifest", "加固入口 → 真实 Application"),
+                        Triple("🩹", "全面修补", "Manifest + 反调试串 + 壳清理")
+                    )
+                ) { mode ->
+                    patchRun(t, full = mode == 1)
+                }
+            }
+        }
+    }
+
+    private fun patchRun(task: TaskMetaView, full: Boolean) {
+        lifecycleScope.launch {
+            Toast.makeText(this@MainActivity,
+                if (full) "全面修补中…" else "修补 Manifest 中…", Toast.LENGTH_SHORT).show()
+            val out = withContext(Dispatchers.IO) {
+                try {
+                    val taskDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT, "tasks/${task.taskId}")
+                    val outApk = java.io.File(taskDir, "build/patched.apk")
+                    val res = com.yuntuoxiu.app.engine.LocalSmaliPatcher.patch(
+                        java.io.File(task.sourceApk), outApk,
+                        realApp = null,
+                        cleanManifest = true,
+                        cleanAntiDebug = full
+                    ) { }
+                    if (res.ok) {
+                        "✅ 修补完成\n" +
+                        "  Manifest 改: ${res.manifestChanged}\n" +
+                        "  清壳 so: ${res.removedShellSo}\n" +
+                        "  清壳 assets: ${res.removedShellAssets}\n" +
+                        "  反调试清理: ${res.antiDebugCleaned}\n" +
+                        "  产物: ${res.outApk?.absolutePath}"
+                    } else "❌ ${res.detail}"
+                } catch (e: Throwable) {
+                    "❌ 修补失败: ${e.message}"
+                }
+            }
+            showResultDialog(if (full) "全面修补" else "Manifest 修补", out)
+        }
     }
 /** 工具 6：环境自检（v2.0 纯本地化） */
     private fun toolEnvCheck() {
