@@ -75,7 +75,7 @@ object SigBypassEngine {
                     try {
                         val bytes = zip.getInputStream(e).use { it.readBytes() }
                         // PKCS#7 容器，提取其中的 X509 证书
-                        val certs = cf.generateCertificates(bytes.byteInputStream())
+                        val certs = cf.generateCertificates(java.io.ByteArrayInputStream(bytes))
                         val it2 = certs.iterator()
                         while (it2.hasNext()) {
                             val c = it2.next()
