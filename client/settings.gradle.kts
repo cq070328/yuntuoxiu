@@ -19,3 +19,7 @@ dependencyResolutionManagement {
 }
 rootProject.name = "YunTuoXiu"
 include(":app")
+// ⭐ v2.0：移植 newBlackDex 脱壳引擎（BlackBox 框架）
+include(":Bcore:black-hook")
+include(":Bcore:black-fake")
+include(":Bcore")
