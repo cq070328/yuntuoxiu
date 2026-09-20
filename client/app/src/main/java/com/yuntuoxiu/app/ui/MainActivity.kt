@@ -721,7 +721,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    }
 
     /** 工具 5：本地引擎详情（原「smali 替换」已废弃——终端依赖，v2.0 本地化后不再需要） */
     private fun toolSmaliPatch() {
