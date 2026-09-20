@@ -68,7 +68,7 @@ public class BlackDexCore {
             return null;
         }
         android.util.Log.i(TAG, "dumpDex(File): install success=" + installResult.success
-                + " err=" + installResult.error + " pkg=" + installResult.packageName);
+                + " msg=" + installResult.msg + " pkg=" + installResult.packageName);
         if (installResult.success) {
             android.util.Log.i(TAG, "dumpDex(File): 调用 launchApk " + installResult.packageName);
             boolean b = BlackBoxCore.get().launchApk(installResult.packageName);

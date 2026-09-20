@@ -184,7 +184,7 @@ public class BlackBoxCore extends ClientConfiguration {
             InstallResult r = getBPackageManager().installPackageAsUser(
                     apk.getAbsolutePath(), InstallOption.installByStorage(), USER_ID);
             android.util.Log.i("BlackBoxCore", "installPackage(File) 结果: "
-                    + (r == null ? "null" : ("success=" + r.success + " err=" + r.error)));
+                    + (r == null ? "null" : ("success=" + r.success + " msg=" + r.msg)));
             return r;
         } catch (Throwable t) {
             android.util.Log.e("BlackBoxCore", "installPackage(File) 异常", t);
