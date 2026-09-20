@@ -160,7 +160,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
             ?: java.io.File(taskDir, "build/sigbypass.apk")
 
         // ① 记录原始签名（供沙箱运行时伪造）
-        val rec = com.yuntuoxiu.app.engine.SigBypassEngine.apply(
+        val rec = com.yuntuoxiu.app.engine.SigBypassEngine.recordAndApply(
             java.io.File(inApk), pkg
         ) { Log.i(TAG, "  $it") }
 

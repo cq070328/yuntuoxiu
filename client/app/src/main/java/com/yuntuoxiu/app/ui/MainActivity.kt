@@ -884,7 +884,7 @@ class MainActivity : AppCompatActivity() {
                             val srcApk = java.io.File(t.sourceApk)
 
                             // ① 记录原始签名
-                            val rec = com.yuntuoxiu.app.engine.SigBypassEngine.apply(
+                            val rec = com.yuntuoxiu.app.engine.SigBypassEngine.recordAndApply(
                                 srcApk, t.lookupPackage) { }
 
                             // ② 若 SRPatch 资产在，则静态注入

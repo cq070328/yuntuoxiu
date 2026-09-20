@@ -134,7 +134,7 @@ object SigBypassEngine {
      * @param srcApk 原始 APK（重打包前）
      * @param packageName 目标包名
      */
-    fun apply(srcApk: File, packageName: String?, onProgress: (String) -> Unit = {}): Result {
+    fun recordAndApply(srcApk: File, packageName: String?, onProgress: (String) -> Unit = {}): Result {
         if (!srcApk.isFile) return Result(false, "源 APK 不存在", false)
 
         val pkg = packageName ?: guessPackageName(srcApk)
