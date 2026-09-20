@@ -119,8 +119,18 @@ class YunTuoXiuApp : Application() {
      */
     private fun initUnpackEngine() {
         try {
+            // ⚠️ 只在主进程初始化（:black / :p0 等子进程跳过）
+            val procName = currentProcessName()
+            if (procName != null && procName.contains(":")) {
+                LogStore.i("YunTuoXiuApp", "非主进程($procName)，跳过引擎初始化")
+                return
+            }
+            LogStore.i("YunTuoXiuApp", "主进程($procName)，开始初始化引擎...")
+
             // 先做可用性自检（native so / ABI）
             val chk = com.yuntuoxiu.app.engine.LocalUnpackEngine.checkAvailability(this)
+            LogStore.i("YunTuoXiuApp", "引擎自检: available=${chk.available} abi=${chk.abi} " +
+                    "soMain=${chk.soMain} problems=${chk.problems}")
             if (!chk.available) {
                 com.yuntuoxiu.app.engine.LocalUnpackEngine.markReady(
                     false, chk.problems.joinToString("; "))
@@ -144,14 +154,49 @@ class YunTuoXiuApp : Application() {
                 override fun isAutoCallMethod(): Boolean = true
                 override fun isVerifyDex(): Boolean = true
             }
-            top.niunaijun.blackbox.BlackDexCore.get().doAttachBaseContext(this, clientConfig)
-            top.niunaijun.blackbox.BlackDexCore.get().doCreate()
+            LogStore.i("YunTuoXiuApp", "调用 doAttachBaseContext...")
+            // ⚠️ doAttachBaseContext/doCreate 在部分 ROM 可能抛异常（如无法启动 :black 进程）
+            //    但它们不是「引擎可用」的硬前提 —— 脱壳时 dumpDex 会重新走完整流程。
+            //    因此这里**分别容错**：任一失败仍标记引擎可用（native 已可加载）。
+            var attachOk = false
+            var createOk = false
+            try {
+                top.niunaijun.blackbox.BlackDexCore.get().doAttachBaseContext(this, clientConfig)
+                attachOk = true
+                LogStore.i("YunTuoXiuApp", "doAttachBaseContext OK")
+            } catch (t: Throwable) {
+                LogStore.w("YunTuoXiuApp", "doAttachBaseContext 失败(可忽略): ${t.message}")
+            }
+            try {
+                top.niunaijun.blackbox.BlackDexCore.get().doCreate()
+                createOk = true
+                LogStore.i("YunTuoXiuApp", "doCreate OK")
+            } catch (t: Throwable) {
+                LogStore.w("YunTuoXiuApp", "doCreate 失败(可忽略): ${t.message}")
+            }
 
+            // native 可加载 = 引擎可用；attach/create 失败仅告警
             com.yuntuoxiu.app.engine.LocalUnpackEngine.markReady(true)
-            LogStore.i("YunTuoXiuApp", "✅ 本地脱壳引擎初始化完成 (${chk.abi})")
+            LogStore.i("YunTuoXiuApp",
+                "✅ 本地脱壳引擎就绪 (${chk.abi}) attach=$attachOk create=$createOk")
         } catch (t: Throwable) {
             com.yuntuoxiu.app.engine.LocalUnpackEngine.markReady(false, t.message)
-            LogStore.w("YunTuoXiuApp", "本地脱壳引擎初始化异常（可能非主进程）: ${t.message}")
+            LogStore.e("YunTuoXiuApp",
+                "本地脱壳引擎初始化异常: ${t.message}\n${t.stackTraceToString().take(800)}")
+        }
+    }
+
+    /** 获取当前进程名（API 28+ 用 Application.getProcessName） */
+    private fun currentProcessName(): String? {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                processName
+            } else {
+                // 低版本从 /proc/self/cmdline 读
+                java.io.File("/proc/self/cmdline").readText().trim().trimEnd('\u0000')
+            }
+        } catch (t: Throwable) {
+            null
         }
     }
 }

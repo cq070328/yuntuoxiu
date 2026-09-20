@@ -135,11 +135,13 @@
             </LinearLayout>
 
             <!-- 本地引擎 -->
+            <!-- 本地引擎（v2.0：整栏隐藏，功能由工具面板的「环境自检」提供） -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:visibility="gone">
 
                 <TextView
                     android:id="@+id/tvServiceBadge"

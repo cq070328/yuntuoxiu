@@ -71,55 +71,53 @@ object TaskRepository {
 
     /**
      * ⭐ v1.8.9 新增：从 task.log 提炼「处理记录」（人类可读）。
-     *
-     * 背景：详情页的「修复轨迹」只覆盖 REPAIRING 阶段（handler_trace），
-     * 任务在 DUMPING/UPLOADING 等早期阶段时轨迹为空，用户看不到任何进展。
-     * 本方法解析后端写入的 task.log（NDJSON），提取**状态流转**与**指令下发**，
-     * 让任意阶段都有可见的处理记录。
+     * ⭐ v2.0：去重（相邻重复状态）+ 精简输出。
      */
     fun buildProgressFromLog(taskId: String): String {
         return try {
             val logFile = File(logsRoot, "$taskId/task.log")
             if (!logFile.exists()) return "（暂无处理记录）"
             val sb = StringBuilder()
-            var idx = 0
+            var lastLine = ""
+            var lastState = ""
+            var repeat = 0
             logFile.forEachLine { line ->
                 val l = line.trim()
                 if (l.isEmpty() || !l.startsWith("{")) return@forEachLine
                 try {
                     val o = com.google.gson.JsonParser.parseString(l).asJsonObject
                     val event = o.get("event")?.asString ?: return@forEachLine
-                    val ts = o.get("ts")?.asString?.substringAfter("T") ?: ""
-                    when (event) {
-                        "task_created" ->
-                            sb.append("• [$ts] 创建任务\n")
-                        "package_resolved" ->
-                            sb.append("• [$ts] 解析包名: ${o.get("package")?.asString ?: "-"}\n")
+                    val ts = o.get("ts")?.asString?.substringAfter("T")?.take(8) ?: ""
+                    val text = when (event) {
+                        "task_created" -> "创建任务"
+                        "package_resolved" -> "解析包名: ${o.get("package")?.asString ?: "-"}"
                         "state_transition" -> {
-                            idx++
-                            sb.append("• [$ts] 状态: ${o.get("src")?.asString} → " +
-                                    "${o.get("dst")?.asString}\n")
+                            val dst = o.get("dst")?.asString ?: ""
+                            // 去重：相同目标状态连续出现时跳过
+                            if (dst == lastState) return@forEachLine
+                            lastState = dst
+                            "状态 → $dst"
                         }
-                        "action_emitted" ->
-                            sb.append("    ↳ 下发指令: ${o.get("action")?.asString}\n")
-                        "readonly_copy_made" ->
-                            sb.append("• [$ts] 生成只读副本（隔离）\n")
-                        "lspatch_ok" ->
-                            sb.append("• [$ts] 注入成功（${o.get("output")?.asString?.substringAfterLast('/') ?: ""}）\n")
-                        "lspatch_start" ->
-                            sb.append("• [$ts] 容器侧注入开始…\n")
-                        "dex_merged_ok" ->
-                            sb.append("• [$ts] DEX 合并通过\n")
-                        "task_success" ->
-                            sb.append("• [$ts] ✅ 任务成功\n")
-                        "task_failed" ->
-                            sb.append("• [$ts] ❌ 失败: ${o.get("fail_code")?.asString ?: ""}\n")
+                        "action_emitted" -> "下发指令: ${o.get("action")?.asString}"
+                        "readonly_copy_made" -> "生成只读副本"
+                        "lspatch_ok" -> "注入成功"
+                        "lspatch_start" -> "容器注入开始…"
+                        "dex_merged_ok" -> "DEX 合并通过"
+                        "task_success" -> "✅ 任务成功"
+                        "task_failed" -> "❌ 失败: ${o.get("fail_code")?.asString ?: ""}"
+                        else -> return@forEachLine
                     }
+                    // 去重：整行相同（连续）跳过
+                    val full = "• [$ts] $text"
+                    if (full == lastLine) { repeat++; return@forEachLine }
+                    lastLine = full
+                    repeat = 0
+                    sb.append(full).append('\n')
                 } catch (_: Throwable) {
                     // 单行解析失败不影响整体
                 }
             }
-            if (sb.isEmpty()) "（暂无处理记录）" else sb.toString()
+            if (sb.isEmpty()) "（暂无处理记录）" else sb.toString().trimEnd()
         } catch (t: Throwable) {
             "（处理记录解析失败: ${t.message}）"
         }
@@ -191,7 +189,7 @@ object TaskRepository {
                 Log.w(TAG, "解析包名失败: ${e.message}"); null
             }
 
-            // 3) 写 create 请求
+            // 3) 写 create 请求（保留，兼容旧流程）
             val req = TaskCreateRequest(
                 apkPath = finalApk.absolutePath,
                 packageName = pkg ?: "",
@@ -201,24 +199,31 @@ object TaskRepository {
             val reqFile = File(uploadsRoot, "create_${UUID.randomUUID()}.req.json")
             reqFile.writeText(gson.toJson(req))
 
-            // 4) ⭐ 单一真相源（v1.8.0 架构修正）：
-            //    任务创建**只**交给 Operit 容器后端（termux_backend.sh /
-            //    ytx.sh start 拉起的 Python watcher）。
-            //
-            //    为什么彻底移除「Termux 判定 + AutoWatcher 兜底」：
-            //      · 旧逻辑在有 Termux 时只写 create 请求，无 Termux 时退回
-            //        APP 内置 AutoWatcher 自建 local_* 骨架。
-            //      · 但本机 Termux 未开 allow-external-apps → RUN_COMMAND 抛
-            //        SecurityException → haveTermux=false → **永远走兜底** →
-            //        建出 local_* 骨架后，AutoWatcher.archive() 把 create 请求
-            //        移进 uploads/done/ → 容器后端再也看不到该请求 → 不建 t_*。
-            //      · 结果：任务永远停在 local_* 骨架，永不推进（卡死）。
-            //
-            //    新逻辑：**只写一个 create 请求**，容器后端是唯一 watcher。
-            //    （容器不在线时，请求会安全地留在 uploads/ 等待被消费，不丢。）
-            // ⭐ v2.0：全本地化 —— 不再有容器后端，请求就地处理。
-            Log.i(TAG, "已提交: ${finalApk.absolutePath} (pkg=$pkg)")
-            SubmitResult.Success(finalApk.absolutePath)
+            // 4) ⭐ v2.0：全本地化 —— 直接创建任务（不再依赖容器后端）
+            val taskId = "t_" + System.currentTimeMillis().toString(36) +
+                    "_" + UUID.randomUUID().toString().substring(0, 6)
+            val now = System.currentTimeMillis()
+            val taskDir = File(tasksRoot, taskId).apply { mkdirs() }
+            File(taskDir, "meta").mkdirs()
+            File(taskDir, "dump").mkdirs()
+            File(taskDir, "build").mkdirs()
+            File(logsRoot, taskId).mkdirs()
+
+            val meta = TaskMetaView(
+                taskId = taskId,
+                state = "CREATED",
+                sourceApk = finalApk.absolutePath,
+                packageName = pkg,
+                allowAutoDegrade = allowAutoDegrade,
+                clientAbi = "arm64-v8a",
+                createdAt = now,
+                updatedAt = now
+            )
+            File(taskDir, "meta/task_meta.json").writeText(gson.toJson(meta))
+            File(logsRoot, "$taskId/task.log").writeText("")
+
+            Log.i(TAG, "已本地创建任务: $taskId (${finalApk.absolutePath}, pkg=$pkg)")
+            SubmitResult.Success(taskId)
         } catch (e: Exception) {
             SubmitResult.Failure(e.message ?: "提交失败")
         }
