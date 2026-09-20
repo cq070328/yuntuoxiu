@@ -175,6 +175,22 @@ object ShellDetect {
                     }
                 }
 
+                // 2c) ⭐ v2.0：厂商策略表的模糊匹配（so 名前缀/子串）
+                //     覆盖「特征库精确名没命中，但名称含厂商指纹」的情况
+                for (st in com.yuntuoxiu.app.worker.ShellStrategies.ALL) {
+                    for (pat in st.cleanSoPatterns) {
+                        if (pat.isBlank()) continue
+                        val p = pat.lowercase()
+                        if (entries.any {
+                                val n = it.substringAfterLast('/').lowercase()
+                                n.endsWith(".so") && n.contains(p)
+                            }) {
+                            bump(st.tag, 0.70, "${st.vendor} 模糊特征: $pat")
+                            break
+                        }
+                    }
+                }
+
                 // 3) DEX 启发式
                 val dexEntries = entries.filter {
                     Regex("^classes\\d*\\.dex$").matches(File(it).name)
