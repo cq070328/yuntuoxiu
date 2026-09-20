@@ -183,17 +183,18 @@ class YunTuoXiuApp : Application() {
         }
     }
 
-    /** 获取当前进程名（API 28+ 用 Application.getProcessName） */
+    /** 获取当前进程名（全版本安全：直接读 /proc/self/cmdline） */
     private fun currentProcessName(): String? {
         return try {
-            if (android.os.Build.VERSION.SDK_INT >= 28) {
-                processName
-            } else {
-                // 低版本从 /proc/self/cmdline 读
-                java.io.File("/proc/self/cmdline").readText().trim().trimEnd('\u0000')
-            }
+            java.io.File("/proc/self/cmdline").readText().trim().trimEnd('\u0000')
         } catch (t: Throwable) {
-            null
+            // 回退：API 28+ 的 getProcessName（反射调用，避免低版本编译错误）
+            try {
+                val m = android.app.Application::class.java.getMethod("getProcessName")
+                m.invoke(this) as? String
+            } catch (_: Throwable) {
+                null
+            }
         }
     }
 }
