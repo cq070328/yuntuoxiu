@@ -30,7 +30,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/android-sdk
-          key: android-sdk-34-v2
+          key: android-sdk-34-v3
 
       # ⚡ Gradle 设置（v3 已验证可用，自带缓存）
       - name: 设置 Gradle
@@ -60,7 +60,7 @@ jobs:
         if: steps.cache-sdk.outputs.cache-hit != 'true'
         run: |
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" "ndk;26.1.10909125" "cmake;3.22.1"
 
       - name: 生成 local.properties
         working-directory: client

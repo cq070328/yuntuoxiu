@@ -13,7 +13,6 @@ android {
         targetSdk = 34
         versionCode = 8
         versionName = "1.6.0"
-
         ndk {
             // 客户端 ABI 固定 arm64-v8a（PRD 定稿）
             abiFilters += listOf("arm64-v8a")
@@ -97,4 +96,7 @@ dependencies {
 
     // JSON（分片契约 / action_payload 解析）
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // ⭐ v2.0：本地脱壳引擎（移植 newBlackDex / BlackBox 框架）
+    implementation(project(":Bcore"))
 }

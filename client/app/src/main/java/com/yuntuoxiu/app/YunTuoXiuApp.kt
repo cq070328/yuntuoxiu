@@ -60,6 +60,14 @@ class YunTuoXiuApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // ⭐ v2.0：初始化本地脱壳引擎（BlackBox/BlackDex）
+        try {
+            initUnpackEngine()
+        } catch (t: Throwable) {
+            LogStore.e("YunTuoXiuApp", "脱壳引擎初始化失败: ${t.message}")
+        }
+
         // 初始化 Shizuku 客户端：注册生命周期监听（断连/权限回收自动上报）
         try {
             ShizukuClient.init(this)
@@ -107,5 +115,38 @@ class YunTuoXiuApp : Application() {
     override fun onTerminate() {
         ShizukuClient.release()
         super.onTerminate()
+    }
+
+    /**
+     * ⭐ v2.0：初始化本地脱壳引擎（BlackBox / newBlackDex 移植）。
+     *
+     * BlackBox 需要以「宿主 App」身份初始化：
+     *   - doAttachBaseContext(context, ClientConfiguration)：记录宿主包名、dump 目录等
+     *   - doCreate()：启动 :black 系统服务进程、安装 IO hook 等
+     */
+    private fun initUnpackEngine() {
+        try {
+            val clientConfig = object : top.niunaijun.blackbox.app.configuration.ClientConfiguration() {
+                override fun getHostPackageName(): String = packageName
+
+                override fun getDexDumpDir(): String {
+                    // dump 输出到公共 dexDump 目录，便于后续本地修复引擎读取
+                    val dir = java.io.File(WORKSPACE_ROOT, "unpackcloud/dump")
+                    dir.mkdirs()
+                    return dir.absolutePath
+                }
+
+                // 默认开启 Hook dump + 主动调用（对抗抽取壳）；深度脱壳 A13+ 已失效，关闭
+                override fun isFixCodeItem(): Boolean = false
+                override fun isEnableHookDump(): Boolean = true
+                override fun isAutoCallMethod(): Boolean = true
+                override fun isVerifyDex(): Boolean = true
+            }
+            top.niunaijun.blackbox.BlackDexCore.get().doAttachBaseContext(this, clientConfig)
+            top.niunaijun.blackbox.BlackDexCore.get().doCreate()
+            LogStore.i("YunTuoXiuApp", "✅ 本地脱壳引擎初始化完成")
+        } catch (t: Throwable) {
+            LogStore.w("YunTuoXiuApp", "本地脱壳引擎初始化异常（可能非主进程）: ${t.message}")
+        }
     }
 }
