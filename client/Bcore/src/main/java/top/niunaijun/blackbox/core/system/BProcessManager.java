@@ -148,14 +148,31 @@ public class BProcessManager {
 
     private boolean initAppProcessL(ProcessRecord record) {
         Log.d(TAG, "initProcess: " + record.processName);
+        String authority = record.getProviderAuthority();
+        BlackBoxCore.bbxLog("initAppProcessL: 拉起 :p 进程 authority=" + authority
+                + " bpid=" + record.bpid + " processName=" + record.processName);
         AppConfig appConfig = record.getClientConfig();
         Bundle bundle = new Bundle();
         bundle.putParcelable(AppConfig.KEY, appConfig);
-        Bundle init = ProviderCall.callSafely(record.getProviderAuthority(), "_Black_|_init_process_", null, bundle);
-        IBinder appThread = BundleCompat.getBinder(init, "_Black_|_client_");
-        if (appThread == null || !appThread.isBinderAlive()) {
+        Bundle init;
+        try {
+            init = ProviderCall.callSafely(authority, "_Black_|_init_process_", null, bundle);
+        } catch (Throwable t) {
+            BlackBoxCore.bbxLog("initAppProcessL: ProviderCall 异常: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
             return false;
         }
+        if (init == null) {
+            BlackBoxCore.bbxLog("initAppProcessL: ProviderCall 返回 null（Provider 无法拉起 :p 进程）");
+            return false;
+        }
+        IBinder appThread = BundleCompat.getBinder(init, "_Black_|_client_");
+        if (appThread == null || !appThread.isBinderAlive()) {
+            BlackBoxCore.bbxLog("initAppProcessL: appThread 为 null 或已死 ("
+                    + (appThread == null ? "null" : "dead") + ")");
+            return false;
+        }
+        BlackBoxCore.bbxLog("initAppProcessL: :p 进程已就绪 appThread=" + appThread);
         attachClientL(record, appThread);
         return true;
     }
@@ -163,6 +180,7 @@ public class BProcessManager {
     private void attachClientL(final ProcessRecord app, final IBinder appThread) {
         IBActivityThread activityThread = IBActivityThread.Stub.asInterface(appThread);
         if (activityThread == null) {
+            BlackBoxCore.bbxLog("attachClientL: activityThread 为 null → kill");
             app.kill();
             return;
         }
