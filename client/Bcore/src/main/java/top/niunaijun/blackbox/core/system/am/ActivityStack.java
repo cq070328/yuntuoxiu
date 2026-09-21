@@ -74,12 +74,16 @@ public class ActivityStack {
             synchronizeTasks();
         }
 
+        BlackBoxCore.bbxLog("startActivityLocked: intent=" + intent + " userId=" + userId);
         ResolveInfo resolveInfo = BPackageManagerService.get().resolveActivity(intent, GET_ACTIVITIES, resolvedType, userId);
         if (resolveInfo == null || resolveInfo.activityInfo == null) {
+            BlackBoxCore.bbxLog("startActivityLocked: resolveInfo 为 null（找不到 Activity）");
             return 0;
         }
         Log.d("TestActivity", "startActivityLocked : " + intent.getComponent().toString());
         ActivityInfo activityInfo = resolveInfo.activityInfo;
+        BlackBoxCore.bbxLog("startActivityLocked: 解析到 " + activityInfo.name
+                + " launchMode=" + activityInfo.launchMode);
 
         ActivityRecord sourceRecord = findActivityRecordByToken(userId, resultTo);
         if (sourceRecord == null) {
@@ -240,11 +244,15 @@ public class ActivityStack {
 
     private Intent startActivityProcess(int userId, Intent intent, ActivityInfo
             info, ActivityRecord record, int callingUid) {
+        BlackBoxCore.bbxLog("startActivityProcess: pkg=" + info.packageName
+                + " processName=" + info.processName + " userId=" + userId);
         ProxyActivityRecord stubRecord = new ProxyActivityRecord(userId, info, intent, record);
         ProcessRecord targetApp = BProcessManager.get().startProcessLocked(info.packageName, info.processName, userId, -1, Binder.getCallingUid(), Binder.getCallingPid());
         if (targetApp == null) {
+            BlackBoxCore.bbxLog("startActivityProcess: startProcessLocked 返回 null → 无法创建 :p 进程！");
             throw new RuntimeException("Unable to create process, name:" + info.name);
         }
+        BlackBoxCore.bbxLog("startActivityProcess: :p 进程已创建 bpid=" + targetApp.bpid);
         return getStartStubActivityIntentInner(intent, targetApp.bpid, userId, stubRecord, info);
     }
 

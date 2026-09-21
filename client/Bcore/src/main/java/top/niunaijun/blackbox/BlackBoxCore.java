@@ -153,9 +153,16 @@ public class BlackBoxCore extends ClientConfiguration {
     public boolean launchApk(String packageName) {
         Intent launchIntentForPackage = getBPackageManager().getLaunchIntentForPackage(packageName, USER_ID);
         if (launchIntentForPackage == null) {
+            bbxLog("launchApk: getLaunchIntentForPackage 返回 null（找不到启动 Activity）");
             return false;
         }
-        startActivity(launchIntentForPackage, USER_ID);
+        bbxLog("launchApk: 启动意图 = " + launchIntentForPackage);
+        try {
+            startActivity(launchIntentForPackage, USER_ID);
+            bbxLog("launchApk: startActivity 已发出");
+        } catch (Throwable t) {
+            bbxLog("launchApk: startActivity 异常: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
         return true;
     }
 
