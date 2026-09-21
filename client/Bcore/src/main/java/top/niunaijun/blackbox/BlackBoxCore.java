@@ -179,17 +179,31 @@ public class BlackBoxCore extends ClientConfiguration {
 
     public InstallResult installPackage(File apk) {
         try {
-            android.util.Log.i("BlackBoxCore", "installPackage(File): " + apk.getAbsolutePath()
+            bbxLog("installPackage(File): " + apk.getAbsolutePath()
                     + " exists=" + apk.exists() + " size=" + apk.length());
             InstallResult r = getBPackageManager().installPackageAsUser(
                     apk.getAbsolutePath(), InstallOption.installByStorage(), USER_ID);
-            android.util.Log.i("BlackBoxCore", "installPackage(File) 结果: "
-                    + (r == null ? "null" : ("success=" + r.success + " msg=" + r.msg)));
+            String msg = (r == null ? "null" : ("success=" + r.success + " msg=" + r.msg));
+            bbxLog("installPackage(File) 结果: " + msg);
             return r;
         } catch (Throwable t) {
-            android.util.Log.e("BlackBoxCore", "installPackage(File) 异常", t);
+            bbxLog("installPackage(File) 异常: " + t.getClass().getSimpleName() + ": " + t.getMessage());
             return new InstallResult().installError(t.getClass().getSimpleName() + ": " + t.getMessage());
         }
+    }
+
+    /** ⭐ v2.0：把 BlackBox 日志同时写 logcat + 文件（Bcore 不能依赖 app 的 LogStore） */
+    public static void bbxLog(String msg) {
+        android.util.Log.i("BlackBoxCore", msg);
+        try {
+            java.io.File f = new java.io.File(
+                    "/storage/emulated/0/MT2/apks/unpackcloud/logs/blackbox.log");
+            f.getParentFile().mkdirs();
+            java.io.FileWriter fw = new java.io.FileWriter(f, true);
+            fw.write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date()) + " " + msg + "\n");
+            fw.close();
+        } catch (Throwable ignored) {}
     }
 
     public InstallResult installPackage(Uri apk) {
