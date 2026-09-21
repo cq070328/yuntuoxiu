@@ -38,6 +38,8 @@ public final class Slog {
 
     
     public static int d(String tag, String msg) {
+        // ⭐ v2.0：同时写入 blackbox.log，便于诊断
+        top.niunaijun.blackbox.BlackBoxCore.bbxLog("[D][" + tag + "] " + msg);
         return Log.println(Log.DEBUG, tag, msg);
     }
 
@@ -74,6 +76,7 @@ public final class Slog {
 
     
     public static int e(String tag, String msg) {
+        top.niunaijun.blackbox.BlackBoxCore.bbxLog("[E][" + tag + "] " + msg);
         return Log.println(Log.ERROR, tag, msg);
     }
 

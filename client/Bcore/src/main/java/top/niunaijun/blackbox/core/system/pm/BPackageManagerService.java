@@ -603,15 +603,25 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                 apkFile = new File(file);
             }
 
+            BlackBoxCore.bbxLog("installLocked: apk=" + apkFile.getAbsolutePath()
+                    + " exists=" + apkFile.exists() + " size=" + apkFile.length());
+
             boolean support = AbiUtils.isSupport(apkFile);
+            BlackBoxCore.bbxLog("installLocked: AbiUtils.isSupport=" + support
+                    + " is64Bit=" + BlackBoxCore.is64Bit());
             if (!support) {
-                return result.installError(BlackBoxCore.is64Bit() ? "not support armeabi-v7a abi" : "not support arm64-v8a abi");
+                String m = BlackBoxCore.is64Bit() ? "not support armeabi-v7a abi" : "not support arm64-v8a abi";
+                BlackBoxCore.bbxLog("installLocked 失败: " + m);
+                return result.installError(m);
             }
 
+            BlackBoxCore.bbxLog("installLocked: 开始 parserApk...");
             PackageParser.Package aPackage = parserApk(apkFile.getAbsolutePath());
             if (aPackage == null) {
+                BlackBoxCore.bbxLog("installLocked 失败: parser apk error.");
                 return result.installError("parser apk error.");
             }
+            BlackBoxCore.bbxLog("installLocked: parserApk OK pkg=" + aPackage.packageName);
             result.packageName = aPackage.packageName;
 
             BPackageSettings bPackageSettings = mSettings.getPackageLPw(aPackage.packageName, aPackage);
@@ -620,8 +630,11 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             // stop pkg
             BProcessManager.get().killPackageAsUser(aPackage.packageName, userId);
 
+            BlackBoxCore.bbxLog("installLocked: 开始 BPackageInstallerService...");
             int i = BPackageInstallerService.get().installPackageAsUser(bPackageSettings, userId);
+            BlackBoxCore.bbxLog("installLocked: installPackageAsUser 返回 " + i);
             if (i < 0) {
+                BlackBoxCore.bbxLog("installLocked 失败: install apk error (i=$i)");
                 return result.installError("install apk error.");
             }
             synchronized (mPackages) {
@@ -631,15 +644,18 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             mComponentResolver.addAllComponents(bPackageSettings.pkg);
             mSettings.scanPackage();
             onPackageInstalled(bPackageSettings.pkg.packageName, userId);
+            BlackBoxCore.bbxLog("installLocked: 全部成功 pkg=" + aPackage.packageName);
             return result;
         } catch (Throwable t) {
+            BlackBoxCore.bbxLog("installLocked 异常: " + t.getClass().getSimpleName() + ": " + t.getMessage());
             t.printStackTrace();
+            // ⭐ v2.0：不再静默返回假成功
+            return result.installError("install exception: " + t.getClass().getSimpleName() + ": " + t.getMessage());
         } finally {
             if (apkFile != null && option.isFlag(InstallOption.FLAG_URI_FILE)) {
                 FileUtils.deleteDir(apkFile);
             }
         }
-        return result;
     }
 
     private PackageParser.Package parserApk(String file) {

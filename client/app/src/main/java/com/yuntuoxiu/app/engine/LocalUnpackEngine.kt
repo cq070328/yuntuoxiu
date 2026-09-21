@@ -210,6 +210,14 @@ object LocalUnpackEngine {
             }
             val dexes = collectDex(dumpDir)
             LogStore.i(TAG, "dumpFile: 完成, 产出 ${dexes.size} 个 dex")
+            // ⭐ v2.0：把 BlackBox 日志尾部追加到 App 日志，便于直接查看失败原因
+            try {
+                val bbxLog = File("/storage/emulated/0/MT2/apks/unpackcloud/logs/blackbox.log")
+                if (bbxLog.isFile) {
+                    val tail = bbxLog.readLines().takeLast(30).joinToString("\n")
+                    LogStore.i(TAG, "=== BlackBox 日志尾部 ===\n$tail")
+                }
+            } catch (_: Throwable) {}
             onProgress("脱壳完成: ${dexes.size} 个 dex")
             return dexes
         } catch (t: Throwable) {
