@@ -148,7 +148,18 @@ public class DexFileCompat {
                 in.close();
                 data = bos.toByteArray();
 
-                // 直接写 dump 文件（命名 target_<size>.dex，便于与宿主 cookie_* 区分）
+                // ⭐⭐ v2.2：跳过「壳 stub dex」（<64KB）——
+                //   实测腾讯御安全：classes.dex=126KB, classes2/3/4.dex=2.4KB
+                //   这些是壳引导代码，写出去会污染产物（DexPostProcessor 虽会过滤，
+                //   但 126KB 的 classes.dex 可能通过 minClasses=5 检查）。
+                //   真实 dex（若有）应远大于 64KB。
+                if (data.length < 64 * 1024) {
+                    BlackBoxCore.bbxLog("getCookiesFromApk: 跳过 stub dex " + dn
+                            + " (" + data.length + " bytes)");
+                    continue;
+                }
+
+                // 直接写 dump 文件（命名 target_<name>.dex）
                 java.io.File out = new java.io.File(dumpDir, "target_" + dn);
                 java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
                 fos.write(data);
@@ -159,7 +170,7 @@ public class DexFileCompat {
                         + " (" + data.length + " bytes)");
             }
             zf.close();
-            BlackBoxCore.bbxLog("getCookiesFromApk: 共写出 " + written + " 个目标 dex");
+            BlackBoxCore.bbxLog("getCookiesFromApk: 共写出 " + written + " 个目标 dex（跳过 stub）");
             // 返回空 cookies（不再走 native 内存读取路径）
             return cookies;
         } catch (Throwable t) {

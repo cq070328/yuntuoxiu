@@ -47,6 +47,14 @@ object DexPostProcessor {
         "libsecexe",
     )
 
+    /** 宿主机（云脱修）特征串 —— 用于识别并丢弃「宿主自己的 dex」 */
+    private val HOST_MARKERS = listOf(
+        "com/yuntuoxiu/app",
+        "top/niunaijun/blackbox",
+        "com/ai/assistance/operit",
+        "Operit",
+    )
+
     data class Result(
         val kept: List<File>,          // 保留（已排序）的 dex
         val dropped: List<File>,       // 丢弃的 dex
@@ -91,6 +99,13 @@ object DexPostProcessor {
             // 壳 stub 特征
             if (info.stubHit != null) {
                 onProgress("丢弃 ${dex.name}（命中壳特征: ${info.stubHit}）")
+                dropped.add(dex)
+                continue
+            }
+            // ⭐ v2.2：丢弃「宿主（云脱修）自己的 dex」
+            //   内存扫描会把宿主 dex 一起 dump 出来（同进程），必须排除。
+            if (info.hostHit != null) {
+                onProgress("丢弃 ${dex.name}（宿主 dex，命中 ${info.hostHit}）")
                 dropped.add(dex)
                 continue
             }
@@ -140,6 +155,7 @@ object DexPostProcessor {
         val file: File,
         val classCount: Int,
         val stubHit: String?,
+        val hostHit: String?,
         val fingerprint: String,
     )
 
@@ -156,10 +172,13 @@ object DexPostProcessor {
             val text = String(data, 0, scanLen, Charsets.ISO_8859_1)
             val stubHit = STUB_MARKERS.firstOrNull { text.contains(it) }
 
+            // ⭐ v2.2：识别「宿主（云脱修）的 dex」—— 含宿主类名特征
+            val hostHit = HOST_MARKERS.firstOrNull { text.contains(it) }
+
             // fingerprint：class 数 + 前 4KB 的简单哈希
             val head = data.copyOfRange(0, minOf(data.size, 4096))
             val hash = head.fold(0) { acc, b -> acc * 31 + b }
-            DexInfo(dex, classCount, stubHit, "$classCount:$hash")
+            DexInfo(dex, classCount, stubHit, hostHit, "$classCount:$hash")
         } catch (t: Throwable) {
             LogStore.w(TAG, "analyze ${dex.name} 失败: ${t.message}")
             null
