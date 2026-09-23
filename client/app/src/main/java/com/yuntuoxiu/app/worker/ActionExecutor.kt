@@ -245,7 +245,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                 mapOf("fail_code" to "REPAIR_NO_DEX"))
         }
         val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
-            java.io.File(origApk), dexes, outApk, cleanShell = true
+            java.io.File(origApk), dexes, outApk, cleanShell = false
         ) { Log.i(TAG, "  $it") }
             ?: return ActionResponse(false, "本地重组失败", mapOf("fail_code" to "REPAIR_FAIL"))
 
@@ -499,7 +499,7 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
         }
         val repaired = File(taskDir, "build/repaired.apk")
         val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
-            File(origApk), dexes, repaired, cleanShell = true
+            File(origApk), dexes, repaired, cleanShell = false
         ) ?: return ActionResponse(false, "本地重组失败", mapOf("fail_code" to "BUILD_FAIL"))
 
         val signed = File(taskDir, "build/signed.apk")

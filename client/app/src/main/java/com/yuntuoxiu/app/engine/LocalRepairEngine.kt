@@ -112,7 +112,7 @@ object LocalRepairEngine {
         srcApk: File,
         dexFiles: List<File>,
         outApk: File,
-        cleanShell: Boolean = true,
+        cleanShell: Boolean = false,   // ⭐ v2.2：默认 false（整体壳的 so 是运行必需，删了会装不上）
         repairDex: Boolean = true,
         realApp: String? = null,
         onProgress: (String) -> Unit = {}

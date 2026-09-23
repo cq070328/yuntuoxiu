@@ -750,7 +750,7 @@ class MainActivity : AppCompatActivity() {
                             if (dexes.isEmpty()) return@withContext "❌ 无可用 DEX"
                             val repaired = File(taskDir, "build/repaired.apk")
                             val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
-                                File(t.sourceApk), dexes, repaired, cleanShell = true
+                                File(t.sourceApk), dexes, repaired, cleanShell = false
                             ) ?: return@withContext "❌ 本地重组失败"
                             // 签名
                             val signed = File(taskDir, "build/signed.apk")

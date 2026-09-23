@@ -692,8 +692,14 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             }
             return aPackage;
         } catch (Throwable t) {
+            // ⭐ v2.2：打印更深层 cause（InvocationTargetException 的真实原因）
+            Throwable cause = t;
+            while (cause.getCause() != null && cause.getCause() != cause) {
+                cause = cause.getCause();
+            }
             BlackBoxCore.bbxLog("parserApk 异常: " + t.getClass().getSimpleName()
-                    + ": " + t.getMessage());
+                    + ": " + t.getMessage()
+                    + " | 根因: " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
             t.printStackTrace();
         }
         return null;

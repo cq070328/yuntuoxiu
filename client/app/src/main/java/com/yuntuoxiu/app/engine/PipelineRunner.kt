@@ -64,19 +64,15 @@ object PipelineRunner {
         var cur = work
 
         // ① 去壳清理
-        onProgress(Progress(1, 7, "去壳清理", "开始…", true))
-        runCatching {
-            val out = File(wd, "oneclick_clean.apk")
-            val n = ShellDetectBridge.cleanShell(cur, out)
-            if (out.isFile && out.length() > 1024) {
-                cur = out
-                onProgress(Progress(1, 7, "去壳清理", "已清理 $n 个壳条目", true))
-            } else {
-                onProgress(Progress(1, 7, "去壳清理", "无壳条目，跳过", true))
-            }
-        }.onFailure {
-            onProgress(Progress(1, 7, "去壳清理", "失败(跳过): ${it.message}", false))
-        }
+        //
+        // ⭐⭐ v2.2 关键修复：默认**跳过**「去壳清理」！
+        //   实测：先删壳 so/assets 会导致目标 APK 无法安装/运行
+        //   （壳 so 是 App 启动必需的），进而 dump 必然失败
+        //   （日志：parserApk 异常 InvocationTargetException → parser apk error）。
+        //
+        //   正解：脱壳必须对「原始完整 APK」进行（壳完整才能跑起来 dump）。
+        //   去壳清理应放在【dump 之后】。这里改为仅记录，不在脱壳前执行。
+        onProgress(Progress(1, 7, "去壳清理", "跳过（脱壳需完整壳，清理移至脱壳后）", true))
 
         // ② 规则修补（正则类步骤，可选）
         if (useRegex) {
@@ -156,7 +152,10 @@ object PipelineRunner {
                 val out = File(wd, "oneclick_replaced.apk")
                 val r = LocalRepairEngine.rebuild(
                     cur, LocalUnpackEngine.collectDex(useDir), out,
-                    cleanShell = true, repairDex = false
+                    // ⭐ v2.2：cleanShell 默认 false —— 对腾讯御安全等「整体壳」，
+                    //   壳 so 是 App 运行必需，删掉会导致装不上/跑不起来。
+                    //   （真正的清壳应由用户在确认不需要壳库时手动启用）
+                    cleanShell = false, repairDex = false
                 )
                 if (r != null && out.isFile) {
                     cur = out
