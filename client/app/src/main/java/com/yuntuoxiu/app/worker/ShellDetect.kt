@@ -426,6 +426,8 @@ object ShellDetect {
                     if (soExact.any { bn == it }) isShell = true
                     if (soPrefix.any { bn.startsWith(it) }) isShell = true
                 }
+                // ⭐ v2.2：根目录壳标记（Free_version / Free_sversion）
+                if (bn == "free_version" || bn == "free_sversion") isShell = true
                 if (low.startsWith("assets/") || low.contains("assets/")) {
                     if (assetKeys.any { low.contains(it.lowercase()) }) isShell = true
                 }

@@ -70,6 +70,11 @@ object LocalRepairEngine {
         "free_version", "free_sversion",
     )
 
+    /** ⭐ v2.2：根目录壳标记文件（腾讯御安全 Free_version / Free_sversion 等） */
+    private val SHELL_ROOT_MARKERS = setOf(
+        "free_version", "free_sversion",
+    )
+
     /**
      * ⭐ v2.2：厂商策略表提供的清理匹配串（运行时合并）。
      *   覆盖 ShellStrategies 的 47 厂商（so 前缀 / assets / 精确名）。
@@ -276,6 +281,8 @@ object LocalRepairEngine {
             // ⭐ v2.2：厂商策略表（47 厂商）
             if (strategyPatterns().any { p -> p.isNotBlank() && bn.contains(p.lowercase()) }) return true
         }
+        // ⭐ v2.2：根目录壳标记文件（腾讯御安全 Free_version / Free_sversion 等）
+        if (SHELL_ROOT_MARKERS.contains(bn.lowercase())) return true
         if (low.contains("assets/")) {
             val assetName = low.substringAfterLast('/')
             // ⭐ v2.2：精确名匹配（t86 / t86_64 / tosversion / 0OO00l111l1l ...）
