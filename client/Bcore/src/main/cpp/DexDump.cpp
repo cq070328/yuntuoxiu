@@ -613,6 +613,9 @@ static void dumpDexBuffer(const uint8_t *begin, int size, const char *outDir) {
             "com/yuntuoxiu/app",
             "top/niunaijun/blackbox",
             "com/ai/assistance/operit",
+            // ⭐ v2.5：宿主专属裸词（足够特异，正常 App 不会含）
+            "yuntuoxiu",
+            "niunaijun",
             // 常见壳 stub（避免把壳 dex 当目标）
             "Lcom/stub/StubApp",
             "Lcom/tencent/StubShell",
@@ -620,10 +623,12 @@ static void dumpDexBuffer(const uint8_t *begin, int size, const char *outDir) {
             "Lcom/qihoo/util",
             (const char *) nullptr
         };
-        // ⭐ v2.3：宿主 dex 判定用「命中计数」而非「命中一个就丢」——
-        //   内存扫描可能跨界混入少量宿主串，计数 >= 2 才判为宿主，降低误杀。
-        //   但「类描述符形式」（Lcom/yuntuoxiu/app 等）命中 1 次即可判定。
-        size_t scanLen = size < (8 * 1024 * 1024) ? size : (8 * 1024 * 1024);
+        // ⭐⭐⭐ v2.5【关键修复】扫描窗口：8MB → **全量**（必要时）。
+        //   实测宿主 classes.dex = 10955592 字节（10.9MB），其字符串池特征
+        //   （Lcom/yuntuoxiu/app 等）可能落在 8MB 之后 → 原 8MB 窗口**漏判** →
+        //   宿主 dex 被写为 scan_10955592.dex（污染产物）。
+        //   现：对 ≤ 32MB 的 dex 全量扫描（覆盖宿主 dex）；>32MB 者扫前 32MB。
+        size_t scanLen = size < (32 * 1024 * 1024) ? size : (size_t)(32 * 1024 * 1024);
         int hostHitCount = 0;
         const char *strongHit = nullptr;   // 类描述符强命中
         const char *weakHit = nullptr;     // 裸包名弱命中
@@ -632,7 +637,7 @@ static void dumpDexBuffer(const uint8_t *begin, int size, const char *outDir) {
             size_t ml = strlen(m);
             if (ml == 0 || scanLen < ml) continue;
             bool found = false;
-            // 简单子串搜索
+            // 简单子串搜索（memmem 更快，但为兼容性保留手写）
             for (size_t p = 0; p + ml <= scanLen; p++) {
                 if (memcmp(buf + p, m, ml) == 0) { found = true; break; }
             }
@@ -646,6 +651,8 @@ static void dumpDexBuffer(const uint8_t *begin, int size, const char *outDir) {
                 }
             }
         }
+        // ⭐ v2.5：判定收紧 —— 强命中(1) 或 弱命中(任意 1 个含 yuntuoxiu/blackbox 的)
+        //   即可判宿主；其余组合仍按计数 >= 2。
         bool isHost = (strongHit != nullptr) || (hostHitCount >= 2);
         if (isHost) {
             ALOGE("memScan: 丢弃宿主 dex (size=%d, 命中 %s, 计数=%d)",

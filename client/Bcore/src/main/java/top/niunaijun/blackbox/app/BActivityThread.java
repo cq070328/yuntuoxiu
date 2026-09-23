@@ -745,6 +745,9 @@ public class BActivityThread extends IBActivityThread.Stub {
                     "top/niunaijun/blackbox",
                     "Lcom/ai/assistance/operit",
                     "com/ai/assistance/operit",
+                    // ⭐ v2.5：宿主专属裸词
+                    "yuntuoxiu",
+                    "niunaijun",
                     "Lcom/stub/StubApp",
                     "Lcom/tencent/StubShell",
                     "Lcom/secneo/apkwrapper",

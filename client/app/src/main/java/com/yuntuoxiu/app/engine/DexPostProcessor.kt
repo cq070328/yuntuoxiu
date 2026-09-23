@@ -52,6 +52,9 @@ object DexPostProcessor {
         "com/yuntuoxiu/app",
         "top/niunaijun/blackbox",
         "com/ai/assistance/operit",
+        // ⭐ v2.5：宿主专属裸词
+        "yuntuoxiu",
+        "niunaijun",
         // ⭐ v2.4：旧 Xposed 脱壳模块（com.ytx.dump）若参与产物，也属宿主侧
         "com/ytx/dump",
         "Lcom/ytx/dump",
@@ -98,7 +101,13 @@ object DexPostProcessor {
     fun process(
         dexFiles: List<File>,
         outDir: File,
-        minClasses: Int = 5,
+        // ⭐⭐⭐ v2.5：默认下限从 5 提到 500。
+        //   实测：加固 App 的产物里混入大量「壳 stub / 内存碎片」：
+        //     · 御安全壳 stub：129KB / 131 class（>5 且无特征命中 → 原逻辑会保留！）
+        //     · 内存碎片：2~9 class
+        //   真实业务 dex 的 class 数通常 ≫ 500，故 500 是安全下限。
+        //   （若目标 App 确实很小，其真实 dex 也基本 >500；此处宁可漏留碎片，不可留壳 stub）
+        minClasses: Int = 500,
         onProgress: (String) -> Unit = {},
     ): Result {
         outDir.mkdirs()

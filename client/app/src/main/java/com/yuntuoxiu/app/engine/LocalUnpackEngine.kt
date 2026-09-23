@@ -245,6 +245,7 @@ object LocalUnpackEngine {
             var stable = 0
             var lastCount = -1
             var tick = 0
+            var deadTicks = 0          // ⭐ v2.5：连续「进程已死且无产物」计数
             while (System.currentTimeMillis() < deadline) {
                 val n = collectDex(dumpDir).size
                 if (n > 0 && n == lastCount && System.currentTimeMillis() >= minDeadline) {
@@ -256,6 +257,23 @@ object LocalUnpackEngine {
                 if (tick % 7 == 0) {
                     LogStore.i(TAG, "dumpFile: 等待中... 已有 $n 个 dex (dir=${dumpDir.absolutePath})")
                 }
+                // ⭐⭐⭐ v2.5 修复：:p0 进程崩溃检测 —— 避免产物恒 0 时白等 180s。
+                //   实测：:p0 因 vm.apk 可写 dex 崩溃后，dump 目录永远为空，
+                //   原逻辑会死等到 180s 超时（用户看到「等待中... 已有 0 个 dex」刷屏）。
+                //   现：进入稳定等待期后，若连续 6 次（≈9s）既无 dex 又无 :p 进程 → 提前结束。
+                if (System.currentTimeMillis() >= minDeadline && n == 0) {
+                    val alive = try {
+                        top.niunaijun.blackbox.BlackDexCore.get().isRunning()
+                    } catch (_: Throwable) { true }
+                    if (!alive) {
+                        deadTicks++
+                        if (deadTicks >= 6) {
+                            LogStore.w(TAG, "dumpFile: :p 进程已消失且无产物 → 提前结束等待")
+                            onProgress("目标进程已退出且未产出 DEX（可查看 blackbox.log 定位崩溃原因）")
+                            break
+                        }
+                    } else deadTicks = 0
+                } else deadTicks = 0
                 Thread.sleep(1500)
             }
             val dexes = collectDex(dumpDir)
@@ -407,7 +425,7 @@ object LocalUnpackEngine {
             if (info == null) { host++; continue }
             val (classCount, markerHits, strongHit) = info
             if (strongHit || markerHits >= 2) host++
-            else if (classCount >= 300) real++
+            else if (classCount >= 500) real++             // ⭐ v2.5：与 DexPostProcessor.minClasses 对齐
             else host++   // 小碎片 / stub → 保守归为 host（不计入 real）
         }
         return DumpClassify(real, host, dexes.map { it.name })

@@ -116,6 +116,22 @@ public class DexFileCompat {
     }
 
     /**
+     * ⭐ v2.5：读取 dex 字节的 class_defs_size（header 偏移 0x60，小端 u4）。
+     * @return class 数；无法解析返回 -1
+     */
+    private static int readDexClassCount(byte[] data) {
+        if (data == null || data.length < 0x64) return -1;
+        // magic 校验
+        if (!(data[0] == 0x64 && data[1] == 0x65 && data[2] == 0x78 && data[3] == 0x0a)) {
+            return -1;
+        }
+        return (data[0x60] & 0xFF)
+                | ((data[0x61] & 0xFF) << 8)
+                | ((data[0x62] & 0xFF) << 16)
+                | ((data[0x63] & 0xFF) << 24);
+    }
+
+    /**
      * ⭐ v2.4：判断某路径是否属于「宿主（云脱修）自身」的 dex。
      *   宿主 APK 安装位置形如：
      *     /data/app/~~xxx/com.yuntuoxiu.app-xxx/base.apk
@@ -260,6 +276,17 @@ public class DexFileCompat {
                 if (data.length < 64 * 1024) {
                     BlackBoxCore.bbxLog("getCookiesFromApk: 跳过 stub dex " + dn
                             + " (" + data.length + " bytes, 体积过小)");
+                    continue;
+                }
+                // ⭐⭐⭐ v2.5【关键修复】按 **class 数** 判定壳 stub。
+                //   实测：御安全（SMZ）壳的 classes.dex = 129KB、**仅 131 个 class**
+                //   （体积 >64KB 且不含特征串 → 逃过 v2.3 的过滤 → 被误当作目标 dex 写出）。
+                //   真实业务 dex 的 class 数通常在数百~上万；壳 stub 往往 < 500。
+                //   这里以 class 数 < 500 判定为壳 stub（更可靠，且与 DexPostProcessor 对齐）。
+                int clsCount = readDexClassCount(data);
+                if (clsCount >= 0 && clsCount < 500) {
+                    BlackBoxCore.bbxLog("getCookiesFromApk: 跳过壳 stub dex " + dn
+                            + " (" + data.length + " bytes, class=" + clsCount + " < 500)");
                     continue;
                 }
                 String head = new String(data, 0, Math.min(data.length, 2 * 1024 * 1024),

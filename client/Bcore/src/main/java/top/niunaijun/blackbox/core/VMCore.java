@@ -91,13 +91,13 @@ public class VMCore {
         File file = (subDir != null && !subDir.isEmpty()) ? new File(baseFile, subDir) : baseFile;
         FileUtils.mkdirs(file);
 
-        // ⭐ v2.4：① 先做一轮内存扫描（早解密捕获）—— 无条件执行
-        try {
-            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: ① 内存扫描（早解密）");
-            memScanDump(file.getAbsolutePath());
-        } catch (Throwable t) {
-            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: ① memScanDump 异常: " + t.getMessage());
-        }
+        // ⭐ v2.5 修复：**移除「① 先扫一轮」**。
+        //   原因：native 的 `dumped` 是 static 全局去重表（按 size），
+        //   若此处先 memScanDump 一轮，命中 size 会被记入 dumped，
+        //   随后 ③ memScanMultiRound 扫到相同 size 时**全部被跳过** →
+        //   「等壳解密稳定后再扫」的语义完全失效（③ 形同虚设）。
+        //   多轮扫描本身已覆盖「早解密」，故只保留 ③。
+        //   （如需早扫描，必须让 native 暴露「清空 dumped」接口，成本大于收益。）
 
         // ② 从 APK 提取 dex（>64KB，跳过 stub；不再清空目录）
         int before = DexFileCompat.countDexInDir(packageName);
