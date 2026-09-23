@@ -404,7 +404,9 @@ object ShellDetect {
         )
         val assetKeys = listOf("fsapk", "libjiagu", "libsecex", "ijiami",
                                "libsecmain", "0OO00l111l1l", "o0oooOO0ooOo.dat",
-                               "libDexHelper")
+                               "libDexHelper",
+                               // ⭐ v2.2 腾讯御安全实测特征
+                               "tosversion", "t86", "t86_64")
 
         var removed = 0
         try {

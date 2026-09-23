@@ -44,9 +44,28 @@ object LocalRepairEngine {
         "libnesec", "libsecneo", "libolive", "libnagain", "librsec"
     )
 
+    /**
+     * ⭐ v2.2：壳 assets 精确名 + 前缀（腾讯御安全实测清单）。
+     *   实测爱作业（腾讯御安全）assets：
+     *     assets/0OO00l111l1l        (10.9MB 加密 dex)
+     *     assets/o0oooOO0ooOo.dat    (216B  配置)
+     *     assets/t86                 (334KB 解密库)
+     *     assets/t86_64              (343KB 解密库)
+     *     assets/tosversion          (35B   版本标记)
+     */
     private val SHELL_ASSET_KEYS = listOf(
         "fsapk", "libjiagu", "libsecex", "ijiami",
-        "libsecmain", "0oo00l111l1l", "o0oooOO0ooOo.dat", "libdexhelper"
+        "libsecmain", "0oo00l111l1l", "o0oooOO0ooOo.dat", "libdexhelper",
+        // ⭐ 腾讯御安全
+        "tosversion", "t86", "t86_64", "0ooo00oo", "dexmethod",
+    )
+
+    /** ⭐ v2.2：壳 assets 精确名集合（整名匹配，避免误伤） */
+    private val SHELL_ASSET_EXACT = setOf(
+        "0oo00l111l1l", "o0oooOO0ooOo.dat".lowercase(),
+        "tosversion", "t86", "t86_64",
+        "0ooo00oo01l1l", "0ooo00oo11l1l", "dexmethod_00oo1l1l.dat".lowercase(),
+        "vencache.dat", "sqlen_venus.dat",
     )
 
     /**
@@ -256,7 +275,11 @@ object LocalRepairEngine {
             if (strategyPatterns().any { p -> p.isNotBlank() && bn.contains(p.lowercase()) }) return true
         }
         if (low.contains("assets/")) {
-            if (SHELL_ASSET_KEYS.any { low.contains(it) }) return true
+            val assetName = low.substringAfterLast('/')
+            // ⭐ v2.2：精确名匹配（t86 / t86_64 / tosversion / 0OO00l111l1l ...）
+            if (SHELL_ASSET_EXACT.contains(assetName)) return true
+            // 前缀/包含匹配（宽松，兜底）
+            if (SHELL_ASSET_KEYS.any { assetName.contains(it) }) return true
             // ⭐ v2.2：assets 正则
             if (SHELL_ASSET_REGEX.any { it.containsMatchIn(low) }) return true
             // ⭐ v2.2：厂商策略表 assets
