@@ -103,6 +103,28 @@ public class CopyExecutor implements Executor {
             File newFile = BEnvironment.getBaseApkDir(ps.pkg.packageName);
             try {
                 newFile.getParentFile().mkdirs();
+                // ⭐⭐⭐ v2.5【关键修复】：目标 base.apk 可能已被上次脱壳「去写权限」（0400，
+                //   为绕过 Writable dex 校验）。此处覆盖前必须**先恢复可写/删除**，
+                //   否则 copyFile 抛 EACCES (Permission denied) → 安装失败 -1。
+                if (newFile.exists()) {
+                    try {
+                        // ① 恢复父目录可写（上次可能 chmod 0500）
+                        File parent = newFile.getParentFile();
+                        if (parent != null && parent.isDirectory()) {
+                            try { android.system.Os.chmod(parent.getAbsolutePath(), 0700); } catch (Throwable ignored) {}
+                        }
+                        // ② 恢复文件可写
+                        try { newFile.setWritable(true, false); } catch (Throwable ignored) {}
+                        try { android.system.Os.chmod(newFile.getAbsolutePath(), 0600); } catch (Throwable ignored) {}
+                        // ③ 兜底：仍不可写则直接删除（随后 copyFile 重建）
+                        if (!newFile.canWrite()) {
+                            boolean deleted = newFile.delete();
+                            BlackBoxCore.bbxLog("CopyExecutor: 目标 APK 不可写 → 删除重建: " + deleted);
+                        }
+                    } catch (Throwable t) {
+                        BlackBoxCore.bbxLog("CopyExecutor: 恢复目标 APK 可写失败(继续尝试): " + t.getMessage());
+                    }
+                }
                 if (option.isFlag(InstallOption.FLAG_URI_FILE)) {
                     boolean b = FileUtils.renameTo(origFile, newFile);
                     if (!b) {
