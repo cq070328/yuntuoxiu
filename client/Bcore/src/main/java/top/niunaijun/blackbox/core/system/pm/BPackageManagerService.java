@@ -87,11 +87,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             BPackageSettings ps = mPackages.get(packageName);
             if (ps != null) {
                 BPackage p = ps.pkg;
-                Thread.dumpStack();
-                Log.d(TAG, ps.toString());
-                Log.d(TAG, p==null ? "p是空值" : p.toString());
-                Log.d(TAG, "flags : "+ flags);
-                Log.d(TAG, "userID : "+ userId);
+                // ⭐ v2.2：移除 Thread.dumpStack()/Log.d 调试噪音（每次查询都 dump 栈会严重拖慢）
                 return PackageManagerCompat.generateApplicationInfo(p, flags, ps.readUserState(userId), userId);
             }
         }

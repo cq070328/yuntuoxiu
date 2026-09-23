@@ -175,14 +175,39 @@ import top.niunaijun.blackbox.utils.Slog;
             packageSettingsIn.setDataPosition(0);
 
             BPackageSettings bPackageSettings = new BPackageSettings(packageSettingsIn);
-            if (bPackageSettings.installOption.isFlag(InstallOption.FLAG_SYSTEM)) {
-                PackageInfo packageInfo = BlackBoxCore.getPackageManager().getPackageInfo(packageName, PackageManager.GET_META_DATA);
-                String currPackageSourcePath = packageInfo.applicationInfo.sourceDir;
-                if (!currPackageSourcePath.equals(bPackageSettings.pkg.baseCodePath)) {
-                    // update baseCodePath And Re install
-                    BProcessManager.get().killAllByPackageName(bPackageSettings.pkg.packageName);
-                    bPackageSettings.pkg.baseCodePath = currPackageSourcePath;
-                    BPackageInstallerService.get().updatePackage(bPackageSettings);
+            // ⭐ v2.2 修复：系统包分支必须“容错 + 可清理”。
+            //   · 原代码在 A16 上可能抛 NoSuchFieldError（PackageParser$Package
+            //     无 baseCodePath），被外层 catch 后**直接删除 app 目录** →
+            //     把原本无关的系统包（如 com.huawei.hwid）误删/误报。
+            //   · 另：若该包已被真机卸载（NameNotFoundException），应清理沙箱残留，
+            //     而不是让它一直触发崩溃。
+            if (bPackageSettings.installOption != null
+                    && bPackageSettings.installOption.isFlag(InstallOption.FLAG_SYSTEM)) {
+                try {
+                    PackageInfo packageInfo = BlackBoxCore.getPackageManager()
+                            .getPackageInfo(packageName, PackageManager.GET_META_DATA);
+                    String currPackageSourcePath = packageInfo.applicationInfo.sourceDir;
+                    // 用 null-safe 比较（baseCodePath 在 A16 可能为 null）
+                    if (currPackageSourcePath != null
+                            && !currPackageSourcePath.equals(bPackageSettings.pkg.baseCodePath)) {
+                        // update baseCodePath And Re install
+                        BProcessManager.get().killAllByPackageName(bPackageSettings.pkg.packageName);
+                        bPackageSettings.pkg.baseCodePath = currPackageSourcePath;
+                        BPackageInstallerService.get().updatePackage(bPackageSettings);
+                    }
+                } catch (PackageManager.NameNotFoundException nnf) {
+                    // 真机已无此系统包 → 清理沙箱残留，避免每次 scanPackage 都崩
+                    BlackBoxCore.bbxLog("updatePackageLP: 系统包已不存在，清理残留 " + packageName);
+                    FileUtils.deleteDir(app);
+                    mPackages.remove(packageName);
+                    BProcessManager.get().killAllByPackageName(packageName);
+                    BPackageManagerService.get().onPackageUninstalled(
+                            packageName, BUserHandle.USER_ALL);
+                    return;
+                } catch (Throwable t) {
+                    // 单包系统分支失败不影响其他包加载（如 A16 字段缺失）
+                    BlackBoxCore.bbxLog("updatePackageLP: 系统包处理异常(跳过) " + packageName
+                            + " (" + t.getClass().getSimpleName() + ": " + t.getMessage() + ")");
                 }
             }
             bPackageSettings.pkg.mExtras = bPackageSettings;

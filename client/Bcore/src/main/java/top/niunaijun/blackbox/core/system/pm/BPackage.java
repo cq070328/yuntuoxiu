@@ -20,6 +20,7 @@ import android.os.Parcelable;
 import java.util.ArrayList;
 
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
+import top.niunaijun.blackbox.utils.compat.PackageParserFieldCompat;
 
 /**
  * Created by Milk on 4/21/21.
@@ -137,10 +138,57 @@ public class BPackage implements Parcelable {
         this.mVersionCode = aPackage.mVersionCode;
         this.applicationInfo = aPackage.applicationInfo;
         this.mVersionName = aPackage.mVersionName;
-        this.baseCodePath = aPackage.baseCodePath;
+        // ⭐ Android 13+ 修复：PackageParser$Package.baseCodePath 字段在 API 33+
+        //   已被 AOSP 移除。直接访问 aPackage.baseCodePath 会在真机上抛
+        //   NoSuchFieldError → installLocked/scanPackage 崩溃 → 未产出 DEX。
+        //   改走安全反射；读不到时回退到 applicationInfo.sourceDir。
+        this.baseCodePath = resolveBaseCodePath(aPackage);
         this.mSharedUserLabel = aPackage.mSharedUserLabel;
         this.configPreferences = aPackage.configPreferences;
         this.reqFeatures = aPackage.reqFeatures;
+    }
+
+    /**
+     * ⭐ Android 13+ 兼容：安全解析 BaseCodePath。
+     *
+     * 优先级：
+     *   1) PackageParser$Package.baseCodePath（API ≤ 32 存在）
+     *   2) PackageParser$Package.codePath（部分 ROM 用 codePath）
+     *   3) applicationInfo.sourceDir / publicSourceDir（API 33+ 兜底，最可靠）
+     *
+     * 任何一步失败都不抛异常 —— 否则会中断 installLocked/scanPackage。
+     */
+    private static String resolveBaseCodePath(PackageParser.Package aPackage) {
+        if (aPackage == null) {
+            return null;
+        }
+        try {
+            String p = PackageParserFieldCompat.getString(aPackage, "baseCodePath");
+            if (p != null && !p.isEmpty()) {
+                return p;
+            }
+            p = PackageParserFieldCompat.getString(aPackage, "codePath");
+            if (p != null && !p.isEmpty()) {
+                return p;
+            }
+        } catch (Throwable ignored) {
+            // 反射层已容错，这里再兜一层
+        }
+        // 兜底：applicationInfo.sourceDir
+        try {
+            if (aPackage.applicationInfo != null) {
+                if (aPackage.applicationInfo.sourceDir != null
+                        && !aPackage.applicationInfo.sourceDir.isEmpty()) {
+                    return aPackage.applicationInfo.sourceDir;
+                }
+                if (aPackage.applicationInfo.publicSourceDir != null
+                        && !aPackage.applicationInfo.publicSourceDir.isEmpty()) {
+                    return aPackage.applicationInfo.publicSourceDir;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     protected BPackage(Parcel in) {

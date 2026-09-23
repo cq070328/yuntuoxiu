@@ -454,7 +454,13 @@ class MainActivity : AppCompatActivity() {
                         com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpInstalled(
                             this@MainActivity, pkg) { }
                     } else emptyList()
-                    if (dexes.isEmpty()) return@withContext "❌ 脱壳未产出 DEX"
+                    if (dexes.isEmpty()) {
+                        // ⭐ v2.2：附上真实失败诊断（:black 崩溃 / ProviderCall / 字段缺失 等）
+                        val dumpDir = com.yuntuoxiu.app.engine.LocalUnpackEngine.getDumpDir()
+                        val diag = com.yuntuoxiu.app.engine.LocalUnpackEngine
+                            .buildDumpFailureDiagnosis(dumpDir, pkg ?: "")
+                        return@withContext "❌ 脱壳未产出 DEX\n\n$diag"
+                    }
                     log.append("      ✅ " + dexes.size + " 个 dex\n")
 
                     // 归拢到任务 dump
@@ -661,7 +667,10 @@ class MainActivity : AppCompatActivity() {
                                     this@MainActivity, pkg) { }
                             }
                             if (dexes.isEmpty()) {
-                                "❌ 本地脱壳未产出 DEX\n（目标可能未启动 / 壳对抗 / 引擎异常）"
+                                val dumpDir = com.yuntuoxiu.app.engine.LocalUnpackEngine.getDumpDir()
+                                val diag = com.yuntuoxiu.app.engine.LocalUnpackEngine
+                                    .buildDumpFailureDiagnosis(dumpDir, pkg)
+                                "❌ 本地脱壳未产出 DEX\n\n$diag"
                             } else {
                                 // 归拢到任务 dump 目录
                                 val dest = File(YunTuoXiuApp.CLOUD_ROOT,

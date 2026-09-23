@@ -151,6 +151,8 @@ public class BActivityThread extends IBActivityThread.Stub {
     public static volatile boolean sDumping = false;
 
     private synchronized void handleBindApplication(String packageName, String processName) {
+        BlackBoxCore.bbxLog("handleBindApplication: 进入 pkg=" + packageName
+                + " proc=" + processName + " userId=" + BActivityThread.getUserId());
         DumpResult result = new DumpResult();
         result.packageName = packageName;
         File dirFile = new File(BlackBoxCore.get().getDexDumpDir(), packageName);
@@ -159,10 +161,14 @@ public class BActivityThread extends IBActivityThread.Stub {
             dirFile = new File(dirFile, subDir);
         }
         result.dir = dirFile.getAbsolutePath();
+        BlackBoxCore.bbxLog("handleBindApplication: dump 目标目录=" + result.dir
+                + " exists=" + dirFile.exists() + " canWrite=" + dirFile.canWrite());
         try {
             PackageInfo packageInfo = BlackBoxCore.getBPackageManager().getPackageInfo(packageName, PackageManager.GET_PROVIDERS, BActivityThread.getUserId());
-            if (packageInfo == null)
+            if (packageInfo == null) {
+                BlackBoxCore.bbxLog("handleBindApplication: packageInfo == null，直接返回");
                 return;
+            }
             ApplicationInfo applicationInfo = packageInfo.applicationInfo;
             if (packageInfo.providers == null) {
                 packageInfo.providers = new ProviderInfo[]{};
@@ -264,7 +270,15 @@ public class BActivityThread extends IBActivityThread.Stub {
 
             mInitialApplication = application;
             ActivityThread.mInitialApplication.set(BlackBoxCore.mainThread(), mInitialApplication);
-            if (Objects.equals(packageName, processName)) {
+            BlackBoxCore.bbxLog("handleBindApplication: application 构造完成 application=" +
+                    (application == null ? "null" : application.getClass().getName())
+                    + " pkg==proc? " + Objects.equals(packageName, processName));
+            // ⭐ v2.2 修复：原判定 `Objects.equals(packageName, processName)` 过于脆弱。
+            //   当目标 App 主 Activity 声明在 :sub 子进程（processName = "pkg:sub"）时，
+            //   packageName != processName → 永久跳过 dump → “未产出 DEX”。
+            //   正确语义：只要该进程属于目标包，就应执行 dump。
+            //   （packageName 为包名；processName 可能是 "pkg" 或 "pkg:xxx"）
+            if (isTargetProcess(packageName, processName)) {
                 ClassLoader loader;
                 if (application == null) {
                     loader = LoadedApk.getClassloader.call(loadedApk);
@@ -272,10 +286,17 @@ public class BActivityThread extends IBActivityThread.Stub {
                     //走到这里已经寄了，牛奶哥说可以挣扎一下，（`_`）
                     loader = application.getClassLoader();
                 }
+                BlackBoxCore.bbxLog("handleBindApplication: 进入 handleDumpDex, loader=" + loader);
                 sDumping = true;
                 handleDumpDex(packageName, result, loader);
+            } else {
+                // ⚠️ 该进程与本包无关 → 不执行 dump
+                BlackBoxCore.bbxLog("handleBindApplication: 非目标进程，跳过 dump (pkg="
+                        + packageName + " proc=" + processName + ")");
             }
         } catch (Throwable e) {
+            BlackBoxCore.bbxLog("handleBindApplication: 异常 " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage());
             Log.e(TAG, "handleBindApplication: ", e);
             mAppConfig = null;
             BlackBoxCore.getBDumpManager().noticeMonitor(result.dumpError(e.getMessage()));
@@ -293,12 +314,20 @@ public class BActivityThread extends IBActivityThread.Stub {
             try {
                 VMCore.cookieDumpDex(classLoader, packageName);
             } finally {
+                BlackBoxCore.bbxLog("handleDumpDex: cookieDumpDex 返回, 检查 " + result.dir);
                 sDumping = false;
                 mAppConfig = null;
                 File dir = new File(result.dir);
-                if (!dir.exists() || dir.listFiles().length == 0) {
+                // ⭐ v2.2 修复：dir.listFiles() 可能为 null（目录不存在/不可读）
+                //   原代码 dir.listFiles().length 会 NPE → 整个 finally 崩 →
+                //   uninstallPackage 不执行、monitor 不回执 → 上层永远“等待中”。
+                File[] dumped = dir.isDirectory() ? dir.listFiles() : null;
+                if (dumped == null || dumped.length == 0) {
+                    BlackBoxCore.bbxLog("handleDumpDex: 无产出 dex 于 " + result.dir
+                            + " (exists=" + dir.exists() + ")");
                     BlackBoxCore.getBDumpManager().noticeMonitor(result.dumpError("not found dex file"));
                 } else {
+                    BlackBoxCore.bbxLog("handleDumpDex: 产出 " + dumped.length + " 个文件");
                     BlackBoxCore.getBDumpManager().noticeMonitor(result.dumpSuccess());
                 }
                 BlackBoxCore.get().uninstallPackage(packageName);
@@ -315,6 +344,29 @@ public class BActivityThread extends IBActivityThread.Stub {
             Log.e(TAG, "createPackageContext: ", e);
         }
         return null;
+    }
+
+    /**
+     * ⭐ v2.2：判断当前进程是否属于目标包（用于决定是否执行 dump）。
+     *
+     * 规则（按优先级）：
+     *   1) processName 与 packageName 完全相等 → 目标主进程 ✅
+     *   2) processName 以 "packageName:" 开头 → 目标子进程（:xxx）✅
+     *   3) processName 以 "packageName." 开头 → 某些壳的特殊进程命名 ✅
+     *   4) 其余 → 非目标进程 ❌
+     *
+     * 这样既保留了「避免在无关进程 dump」的安全性，
+     * 又修复了「主 Activity 声明在 :sub 进程 → 永不 dump」的缺陷。
+     */
+    private static boolean isTargetProcess(String packageName, String processName) {
+        if (packageName == null || processName == null) {
+            return false;
+        }
+        if (packageName.equals(processName)) {
+            return true;
+        }
+        return processName.startsWith(packageName + ":")
+                || processName.startsWith(packageName + ".");
     }
 
     @Override

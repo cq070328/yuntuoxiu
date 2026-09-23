@@ -55,6 +55,24 @@ class YunTuoXiuApp : Application() {
 
         /** 启动命令（v2.0 已废弃——全本地化） */
         const val START_CMD = "(v2.0 无需启动后端)"
+
+        /**
+         * ⭐ v2.1 P0 修复：脱壳 dump 输出目录（引擎与 UI **必须**共用同一处）。
+         *
+         * 历史问题：引擎 override 写到 `unpackcloud/dump`（Operit 工作区路径），
+         *   App 进程（u0_aXXX）对该路径 **无写权限**，dex 静默写失败 → 永远「未产出 DEX」。
+         *
+         * 现改为 App 私有外部目录：`/sdcard/Android/data/<pkg>/files/dexdump`
+         *   - 无需 MANAGE_EXTERNAL_STORAGE，App 天然可读写；
+         *   - 引擎、UI、LocalUnpackEngine 三方共用此常量，杜绝目录不一致。
+         */
+        fun dexDumpRoot(): java.io.File {
+            val base = instance.getExternalFilesDir(null)
+                ?: java.io.File(instance.filesDir, "dexdump")
+            val dir = java.io.File(base, "dexdump")
+            if (!dir.exists()) dir.mkdirs()
+            return dir
+        }
     }
 
     override fun onCreate() {
@@ -92,9 +110,8 @@ class YunTuoXiuApp : Application() {
         val cfg = object : top.niunaijun.blackbox.app.configuration.ClientConfiguration() {
             override fun getHostPackageName(): String = packageName
             override fun getDexDumpDir(): String {
-                val dir = java.io.File(WORKSPACE_ROOT, "unpackcloud/dump")
-                dir.mkdirs()
-                return dir.absolutePath
+                // ⭐ v2.1 P0：与主进程/UI 统一使用 App 私有外部目录（见 dexDumpRoot）
+                return dexDumpRoot().absolutePath
             }
             override fun isFixCodeItem(): Boolean = false
             override fun isEnableHookDump(): Boolean = true
@@ -259,10 +276,8 @@ class YunTuoXiuApp : Application() {
                 override fun getHostPackageName(): String = packageName
 
                 override fun getDexDumpDir(): String {
-                    // dump 输出到公共 dump 目录，便于后续本地修复引擎读取
-                    val dir = java.io.File(WORKSPACE_ROOT, "unpackcloud/dump")
-                    dir.mkdirs()
-                    return dir.absolutePath
+                    // ⭐ v2.1 P0：统一到 App 私有外部目录（引擎/UI/LocalUnpackEngine 共用）
+                    return dexDumpRoot().absolutePath
                 }
 
                 // 默认开启 Hook dump + 主动调用（对抗抽取壳）；深度脱壳 A13+ 已失效，关闭

@@ -280,9 +280,17 @@ public class PackageManagerCompat {
             return null;
         }
         String sourceDir = p.baseCodePath;
+        if (p.applicationInfo == null && sourceDir != null && !sourceDir.isEmpty()) {
+            // ⭐ v2.2：sourceDir 可能为 null（A16 字段缺失且无兜底）→ 避免 NPE
+            android.content.pm.PackageInfo archiveInfo =
+                    BlackBoxCore.getPackageManager().getPackageArchiveInfo(sourceDir, 0);
+            if (archiveInfo != null) {
+                p.applicationInfo = archiveInfo.applicationInfo;
+            }
+        }
         if (p.applicationInfo == null) {
-            p.applicationInfo = BlackBoxCore.getPackageManager()
-                    .getPackageArchiveInfo(sourceDir, 0).applicationInfo;
+            // 完全无法确定 applicationInfo → 返回 null，由上层容错处理
+            return null;
         }
         ApplicationInfo ai = new ApplicationInfo(p.applicationInfo);
         if ((flags & PackageManager.GET_META_DATA) != 0) {

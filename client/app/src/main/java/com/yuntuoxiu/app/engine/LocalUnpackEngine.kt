@@ -210,6 +210,18 @@ object LocalUnpackEngine {
             }
             val dexes = collectDex(dumpDir)
             LogStore.i(TAG, "dumpFile: 完成, 产出 ${dexes.size} 个 dex")
+            // ⭐ v2.1 P0：dump 为空时打印真实引擎目录与目录内容，便于定位（权限/写失败/无产出）
+            if (dexes.isEmpty()) {
+                val exists = dumpDir.exists()
+                val list = dumpDir.listFiles()?.joinToString { it.name } ?: "(读取失败)"
+                LogStore.e(TAG, "dumpFile: 未产出 DEX！引擎目录=${dumpDir.absolutePath} " +
+                        "exists=$exists canWrite=${dumpDir.canWrite()} 内容=[$list]")
+                // ⭐ v2.2：把黑盒日志尾部（含 :black startup 崩溃、ProviderCall 失败、
+                //   NoSuchFieldError 等）一并回传到 UI，用户可据此定位真实失败原因，
+                //   而不是只看到“未产出 DEX”。
+                val diag = buildDumpFailureDiagnosis(dumpDir, result.packageName)
+                onProgress("未产出 DEX：$diag")
+            }
             // ⭐ v2.0：把 BlackBox 日志尾部追加到 App 日志，便于直接查看失败原因
             try {
                 val bbxLog = File("/storage/emulated/0/MT2/apks/unpackcloud/logs/blackbox.log")
@@ -232,11 +244,55 @@ object LocalUnpackEngine {
 
     /** 引擎根 dump 目录（同时写入 .nomedia 阻止媒体扫描） */
     fun getDumpDir(): File {
-        val dir = File(YunTuoXiuApp.CLOUD_ROOT, "dump")
+        // ⭐ v2.1 P0：直接采用引擎（ClientConfiguration）的权威目录，
+        //   杜绝「引擎写 A、UI 读 B」导致永远数不到 dex 的问题。
+        val dir = try {
+            File(top.niunaijun.blackbox.BlackBoxCore.get().getDexDumpDir())
+        } catch (_: Throwable) {
+            // 引擎未初始化时的兜底：与 YunTuoXiuApp.dexDumpRoot() 保持一致
+            YunTuoXiuApp.dexDumpRoot()
+        }
         if (!dir.exists()) dir.mkdirs()
         // ⭐ v2.0：阻止媒体库扫描（dump 的 dex/资源不会被相册收录）
         ensureNoMedia(dir)
         return dir
+    }
+
+    /**
+     * ⭐ v2.2：构造脱壳失败的可读诊断信息。
+     *   读取 blackbox.log 尾部，提取关键失败行（startup 崩溃 / ProviderCall / NoSuchFieldError /
+     *   进程未拉起 等），同时汇总引擎目录状态。
+     */
+    fun buildDumpFailureDiagnosis(dumpDir: File, pkg: String): String {
+        val sb = StringBuilder()
+        sb.append("目录=").append(dumpDir.absolutePath)
+        sb.append(" exists=").append(dumpDir.exists())
+        sb.append(" canWrite=").append(dumpDir.canWrite())
+        try {
+            val bbxLog = File("/storage/emulated/0/MT2/apks/unpackcloud/logs/blackbox.log")
+            if (bbxLog.isFile) {
+                val lines = bbxLog.readLines().takeLast(120)
+                // 提取与本次失败强相关的关键行
+                val keys = listOf(
+                    "NoSuchFieldError", "ProviderCall", "initAppProcessL",
+                    "startApply", "startup", "崩溃", "crash", "Exception",
+                    "未拉起", "返回 null", "bad Package", "com.huawei.hwid"
+                )
+                val hits = lines.filter { l -> keys.any { l.contains(it) } }.takeLast(12)
+                if (hits.isNotEmpty()) {
+                    sb.append("\n关键日志:\n").append(hits.joinToString("\n"))
+                } else {
+                    sb.append("\n关键日志: (blackbox.log 无匹配行，末 5 行：")
+                    sb.append(lines.takeLast(5).joinToString(" | "))
+                    sb.append(")")
+                }
+            } else {
+                sb.append("\nblackbox.log 不存在")
+            }
+        } catch (t: Throwable) {
+            sb.append("\n读取 blackbox.log 失败: ${t.message}")
+        }
+        return sb.toString()
     }
 
     /** 在目录（及其父链）放置 .nomedia，阻止媒体扫描 */

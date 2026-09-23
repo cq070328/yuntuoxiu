@@ -24,6 +24,12 @@ public class ProviderCall {
             return call(authority, BlackBoxCore.get().getContext(), methodName, arg, bundle, 5);
         } catch (IllegalAccessException e) {
             e.printStackTrace();
+            top.niunaijun.blackbox.BlackBoxCore.bbxLog("ProviderCall.callSafely 失败(authority="
+                    + authority + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        } catch (Throwable t) {
+            // ⭐ v2.1 P1：Provider 未注册/远程异常等此前会冒泡被静默吞掉，统一记录
+            top.niunaijun.blackbox.BlackBoxCore.bbxLog("ProviderCall.callSafely 异常(authority="
+                    + authority + "): " + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
         return null;
     }

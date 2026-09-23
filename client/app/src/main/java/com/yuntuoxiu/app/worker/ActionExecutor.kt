@@ -213,8 +213,12 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
         }
 
         if (dexes.isEmpty()) {
+            // ⭐ v2.2：附上真实失败诊断
+            val dumpDir = com.yuntuoxiu.app.engine.LocalUnpackEngine.getDumpDir()
+            val diag = com.yuntuoxiu.app.engine.LocalUnpackEngine
+                .buildDumpFailureDiagnosis(dumpDir, pkg ?: "")
             return ActionResponse(false,
-                "本地脱壳未产出 DEX（目标可能未启动/壳对抗/引擎异常）",
+                "本地脱壳未产出 DEX\n$diag",
                 mapOf("fail_code" to "DUMP_LOCAL_EMPTY"))
         }
         val sum = com.yuntuoxiu.app.engine.LocalUnpackEngine.summarize(dexes)
