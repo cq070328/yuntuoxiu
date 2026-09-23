@@ -247,6 +247,39 @@ public class BActivityThread extends IBActivityThread.Stub {
             //   修复：在建 ClassLoader 前，把 base.apk 的**写权限去掉**（chmod a-w）。
             //   文件仍可读 → PathClassLoader 校验通过 → 目标 loader 建立成功。
             //   —— 通用：对所有目标 App 都适用。
+            // ⭐⭐⭐ v2.5【关键修复】:p0 进程加载 vm.apk/empty.apk/junit.apk 被拒 → 进程崩溃。
+            //
+            //   实测日志（:p0 进程）：
+            //     E/untuoxiu.app:p0: Attempt to load writable dex file: .../virtual/cache/vm.apk
+            //     E/untuoxiu.app:p0: hiddenapi: setHiddenApiExemptions ... denied
+            //   随后 :p0 进程**静默消失**（blackbox.log 止于 “PathClassLoader 已建立”）。
+            //
+            //   根因：BlackBox 的 VM 运行时 dex（vm.apk / empty.apk / junit.apk）位于
+            //     virtual/cache/（应用私有可写目录）→ Android 7+ DexFile::Open 拒绝
+            //     「可写 dex 文件」→ 加载抛错 → 进程启动即死。
+            //
+            //   修复：在建任何 loader【之前】，把这些 jar 的写权限去掉（chmod 0400）。
+            //   必须在 :p0 进程内执行（跨进程权限不共享，主进程 chmod 无效）。
+            try {
+                File cacheDir = BEnvironment.getCacheDir();
+                String[] jarNames = new String[]{"vm.apk", "empty.apk", "junit.apk", "vm.jar", "empty.jar", "junit.jar"};
+                for (String n : jarNames) {
+                    File j = new File(cacheDir, n);
+                    if (j.isFile()) {
+                        makeUnwritable(j);
+                    }
+                }
+                // 兼容旧字段（若它们指向其它路径）
+                makeUnwritable(BEnvironment.VM_JAR);
+                makeUnwritable(BEnvironment.EMPTY_JAR);
+                makeUnwritable(BEnvironment.JUNIT_JAR);
+                BlackBoxCore.bbxLog("handleBindApplication: [VM-jar] 已对 vm/empty/junit 去写权限"
+                        + " (cacheDir=" + cacheDir.getAbsolutePath() + ")");
+            } catch (Throwable t) {
+                BlackBoxCore.bbxLog("handleBindApplication: [VM-jar] 去写权限失败: "
+                        + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+
             try {
                 File targetApk = BEnvironment.getBaseApkDir(packageName);
                 if (targetApk.isFile() && targetApk.length() > 0) {

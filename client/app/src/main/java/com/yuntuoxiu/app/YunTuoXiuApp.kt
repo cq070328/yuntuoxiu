@@ -136,6 +136,26 @@ class YunTuoXiuApp : Application() {
             override fun isAutoCallMethod(): Boolean = true
             override fun isVerifyDex(): Boolean = true
         }
+        // ⭐⭐⭐ v2.5【关键修复】:p0 进程加载 vm.apk 被拒 → 进程崩溃。
+        //   实测：E/untuoxiu.app:p0: Attempt to load writable dex file: .../virtual/cache/vm.apk
+        //   → 之后 :p0 静默消失（no dump）。
+        //   根因：BlackBox VM 运行时 dex（vm.apk/empty.apk/junit.apk）在可写目录，
+        //         Android 拒绝加载「可写 dex」。必须在加载前去掉写权限。
+        //   ⚠️ 必须在此（doAttachBaseContext 之前）执行，且只能在本进程内做。
+        try {
+            val cacheDir = top.niunaijun.blackbox.core.env.BEnvironment.getCacheDir()
+            for (n in arrayOf("vm.apk", "empty.apk", "junit.apk", "vm.jar", "empty.jar", "junit.jar")) {
+                val j = File(cacheDir, n)
+                if (j.isFile && j.canWrite()) {
+                    var ok = false
+                    try { android.system.Os.chmod(j.absolutePath, 0x100 /*0400*/); ok = !j.canWrite() } catch (_: Throwable) {}
+                    if (!ok) { try { j.setWritable(false, false); ok = !j.canWrite() } catch (_: Throwable) {} }
+                    LogStore.i("YunTuoXiuApp", "子进程 VM-jar 去写权限: ${j.name} -> canWrite=${j.canWrite()}")
+                }
+            }
+        } catch (t: Throwable) {
+            LogStore.w("YunTuoXiuApp", "子进程 VM-jar 去写权限失败: ${t.message}")
+        }
         // 只设置上下文（内部会 mClientConfiguration.init()）
         top.niunaijun.blackbox.BlackDexCore.get().doAttachBaseContext(this, cfg)
     }

@@ -95,5 +95,43 @@ public class BlackBoxSystem {
         } catch (IOException e) {
             e.printStackTrace();
         }
+        // ⭐⭐⭐ v2.5【关键修复】拷贝完成后必须**立即设回只读**。
+        //   否则 :p0 进程加载 vm.apk 时 Android 会抛：
+        //     "Attempt to load writable dex file: .../virtual/cache/vm.apk"
+        //   → 进程启动即崩溃 → 永远无 dump（"未产出 DEX"）。
+        //   注意：:p0 与 :black 是不同进程，必须在 jar 落盘后（本处）锁定，
+        //         仅靠 BActivityThread 内的 chmod 不够（时机晚于 :p0 启动）。
+        lockJarReadOnly(JUNIT_JAR);
+        lockJarReadOnly(EMPTY_JAR);
+        lockJarReadOnly(VM_JAR);
+        // ⭐ v2.5：同时覆盖「懒加载方法」路径（getCacheDir()/vm.apk 等），
+        //   防止静态字段 VM_JAR 因 context 尚未就绪而指向错误路径。
+        lockJarReadOnly(BEnvironment.getJUnitJar());
+        lockJarReadOnly(BEnvironment.getEmptyJar());
+        lockJarReadOnly(BEnvironment.getVmJar());
+    }
+
+    /** 把 jar 去写权限（三级兜底），供 :p0 进程安全加载 */
+    private void lockJarReadOnly(java.io.File jar) {
+        if (jar == null || !jar.isFile()) return;
+        try {
+            if (!jar.canWrite()) return;
+            try {
+                android.system.Os.chmod(jar.getAbsolutePath(), 0400);
+            } catch (Throwable ignored) {
+            }
+            if (jar.canWrite()) {
+                try { jar.setWritable(false, false); } catch (Throwable ignored) {}
+            }
+            if (jar.canWrite()) {
+                try {
+                    FileUtils.chmod(jar.getAbsolutePath(), FileUtils.FileMode.MODE_IRUSR);
+                } catch (Throwable ignored) {}
+            }
+            BlackBoxCore.bbxLog("initJarEnv: " + jar.getName()
+                    + " 去写权限 -> canWrite=" + jar.canWrite());
+        } catch (Throwable t) {
+            BlackBoxCore.bbxLog("initJarEnv: lock " + jar.getName() + " 失败: " + t.getMessage());
+        }
     }
 }
