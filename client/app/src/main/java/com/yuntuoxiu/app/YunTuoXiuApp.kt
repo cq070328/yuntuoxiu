@@ -1,6 +1,7 @@
 package com.yuntuoxiu.app
 import android.app.Application
 import com.yuntuoxiu.app.shizuku.ShizukuClient
+import java.io.File
 
 /**
  * 云脱修 —— APK 云脱壳 + 云修复 客户端。
