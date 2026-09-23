@@ -103,21 +103,13 @@ public class DexFileCompat {
         try {
             // 沙箱安装的目标 APK：virtual/data/app/<pkg>/base.apk
             java.io.File apk = top.niunaijun.blackbox.core.env.BEnvironment.getBaseApkDir(packageName);
+            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: apk=" + apk
+                    + " exists=" + (apk != null && apk.isFile()));
             if (apk == null || !apk.isFile()) {
-                android.util.Log.w(TAG, "getCookiesFromApk: APK 不存在 " + apk);
                 return cookies;
             }
-            // 解压到宿主 cache 下的临时目录（供 DexFile 打开）
-            java.io.File tmp = new java.io.File(
-                    top.niunaijun.blackbox.BlackBoxCore.getContext().getCacheDir(), "apkdex/" + packageName);
-            if (tmp.exists()) {
-                // 清空旧内容
-                java.io.File[] olds = tmp.listFiles();
-                if (olds != null) for (java.io.File f : olds) f.delete();
-            } else {
-                tmp.mkdirs();
-            }
 
+            // 读取 APK 内所有 classesN.dex 的字节
             java.util.zip.ZipFile zf = new java.util.zip.ZipFile(apk);
             java.util.List<String> dexNames = new ArrayList<>();
             java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
@@ -126,26 +118,41 @@ public class DexFileCompat {
                 if (e.getName().matches("^classes\\d*\\.dex$")) dexNames.add(e.getName());
             }
             java.util.Collections.sort(dexNames);
-            android.util.Log.i(TAG, "getCookiesFromApk: " + apk + " dex=" + dexNames);
+            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: dex entries=" + dexNames);
 
+            java.util.List<byte[]> dexBytes = new ArrayList<>();
             for (String dn : dexNames) {
-                java.io.File out = new java.io.File(tmp, dn);
                 java.io.InputStream in = zf.getInputStream(zf.getEntry(dn));
-                java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
                 byte[] buf = new byte[8192];
                 int n;
-                while ((n = in.read(buf)) != -1) fos.write(buf, 0, n);
-                fos.close();
+                while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
                 in.close();
-
-                // ⭐ 用 DexFile 打开（DexFile 不校验"可写目录"）
-                DexFile df = new DexFile(out);
-                cookies.addAll(getCookies(df));
+                dexBytes.add(bos.toByteArray());
             }
             zf.close();
-            android.util.Log.i(TAG, "getCookiesFromApk: 共提取 cookies=" + cookies.size());
+            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: 读出 " + dexBytes.size() + " 个 dex 字节");
+
+            // ⭐⭐ A16 关键：不能用 `new DexFile(File)`（API 26+ 已废弃/受限）。
+            //   改用 InMemoryDexClassLoader（API 26+ 支持），从内存字节构造，
+            //   再反射取它的 DexPathList → Element[] → dexFile → mCookie。
+            java.nio.ByteBuffer[] bufs = new java.nio.ByteBuffer[dexBytes.size()];
+            for (int i = 0; i < dexBytes.size(); i++) {
+                bufs[i] = java.nio.ByteBuffer.wrap(dexBytes.get(i));
+            }
+            dalvik.system.InMemoryDexClassLoader imcl =
+                    new dalvik.system.InMemoryDexClassLoader(bufs, null);
+            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: 已构造 InMemoryDexClassLoader");
+
+            // 从 InMemoryDexClassLoader 的 DexPathList 取 cookies
+            cookies = getCookies(imcl);
+            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: 从 InMemoryDexClassLoader 取 cookies="
+                    + cookies.size());
         } catch (Throwable t) {
-            android.util.Log.e(TAG, "getCookiesFromApk 失败: " + t.getMessage(), t);
+            // ⭐ 同时写文件日志（logcat + bbxLog），便于定位
+            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk 失败: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
+            android.util.Log.e(TAG, "getCookiesFromApk 失败", t);
         }
         return cookies;
     }
