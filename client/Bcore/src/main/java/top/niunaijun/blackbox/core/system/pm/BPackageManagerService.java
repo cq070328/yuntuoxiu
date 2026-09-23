@@ -623,6 +623,21 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             BPackageSettings bPackageSettings = mSettings.getPackageLPw(aPackage.packageName, aPackage);
             bPackageSettings.installOption = option;
 
+            // ⭐ v2.2 关键修复：强行回填 baseCodePath 为「实际解析的 APK 路径」。
+            //   原因：Android 13+ 的 PackageParser$Package 已无 baseCodePath/codePath，
+            //   而解析本地文件时 applicationInfo.sourceDir 也可能为空 →
+            //   BPackage.baseCodePath = null → CopyExecutor 第30行 new File(null) NPE
+            //   → exec 返回 -1 → “install apk error” → 无 dump。
+            //   这里用最权威的 apkFile 绝对路径兜底，确保后续 CopyExecutor 可用。
+            if (bPackageSettings.pkg != null) {
+                String realPath = apkFile.getAbsolutePath();
+                if (bPackageSettings.pkg.baseCodePath == null
+                        || bPackageSettings.pkg.baseCodePath.isEmpty()) {
+                    bPackageSettings.pkg.baseCodePath = realPath;
+                    BlackBoxCore.bbxLog("installLocked: 回填 baseCodePath=" + realPath);
+                }
+            }
+
             // stop pkg
             BProcessManager.get().killPackageAsUser(aPackage.packageName, userId);
 
@@ -630,7 +645,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             int i = BPackageInstallerService.get().installPackageAsUser(bPackageSettings, userId);
             BlackBoxCore.bbxLog("installLocked: installPackageAsUser 返回 " + i);
             if (i < 0) {
-                BlackBoxCore.bbxLog("installLocked 失败: install apk error (i=$i)");
+                BlackBoxCore.bbxLog("installLocked 失败: install apk error (i=" + i + ")");
                 return result.installError("install apk error.");
             }
             synchronized (mPackages) {
@@ -659,8 +674,26 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             PackageParser parser = PackageParserCompat.createParser(new File(file));
             PackageParser.Package aPackage = PackageParserCompat.parsePackage(parser, new File(file), 0);
             PackageParserCompat.collectCertificates(parser, aPackage, 0);
+            // ⭐ v2.2：解析本地 APK 时，Android 13+ 的 applicationInfo.sourceDir
+            //   常常为空 → 必须在源头回填为实际文件路径，否则后续
+            //   generateApplicationInfo / CopyExecutor 都无法定位 APK。
+            try {
+                if (aPackage != null && aPackage.applicationInfo != null) {
+                    if (aPackage.applicationInfo.sourceDir == null
+                            || aPackage.applicationInfo.sourceDir.isEmpty()) {
+                        aPackage.applicationInfo.sourceDir = file;
+                    }
+                    if (aPackage.applicationInfo.publicSourceDir == null
+                            || aPackage.applicationInfo.publicSourceDir.isEmpty()) {
+                        aPackage.applicationInfo.publicSourceDir = file;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
             return aPackage;
         } catch (Throwable t) {
+            BlackBoxCore.bbxLog("parserApk 异常: " + t.getClass().getSimpleName()
+                    + ": " + t.getMessage());
             t.printStackTrace();
         }
         return null;
