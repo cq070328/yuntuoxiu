@@ -207,6 +207,22 @@ object LocalSmaliPatcher {
     // ==================== Manifest 修补 ====================
 
     /**
+     * ⭐ v2.2：公共入口 —— 把 AXML 字节里的壳入口替换为 realApp。
+     *   供 LocalRepairEngine / PipelineRunner 复用。
+     *
+     * @return 替换后的字节；未变化返回原引用/ null
+     */
+    fun patchManifestEntry(data: ByteArray, realApp: String): ByteArray? {
+        return try {
+            val (out, changed) = patchManifest(data, realApp)
+            if (changed) out else null
+        } catch (t: Throwable) {
+            LogStore.w(TAG, "patchManifestEntry 失败: ${t.message}")
+            null
+        }
+    }
+
+    /**
      * 修补 Manifest：把加固入口类名替换为真实 Application。
      *
      * ⭐ v2.0：改用 AxmEditor（真正的二进制 AXML 编辑，支持任意长度替换）。

@@ -85,6 +85,17 @@ object RealEntryFinder {
             return Found(best, "dex-super", dexClasses.toList(), "dex 继承扫描命中")
         }
 
+        // ②b ⭐ v2.2：从壳入口类的「被引用类」反查真实 Application
+        //     壳 stub（如 com.tencent.StubShell.TxAppEntry）的 dex 里常内联真实入口类名。
+        //     策略：在 dex 中查找「继承 Application」之外，也接受名字含 App/Application 的类。
+        val appLike = scanDexForAppLikeClasses(dexFiles, packageName)
+        if (appLike.isNotEmpty()) {
+            candidates.addAll(appLike)
+            val best = appLike.first()
+            LogStore.i(TAG, "从 dex(App-like) 找到疑似入口: $best")
+            return Found(best, "dex-applike", appLike, "dex App-like 类名命中")
+        }
+
         // ③ 包名启发
         if (!packageName.isNullOrBlank()) {
             val guesses = listOf(
@@ -159,6 +170,37 @@ object RealEntryFinder {
             } catch (_: Throwable) {}
         }
         return false
+    }
+
+    /**
+     * ⭐ v2.2：扫描 dex 中「名字像 Application 入口」的类（放宽启发）。
+     *   匹配规则（按优先级）：
+     *     1) 类名以包名开头 且 以 App / Application / MyApp / BaseApp 结尾
+     *     2) 任意类名含 "Application"（继承关系未知）
+     *   排除系统/壳类名。
+     */
+    private fun scanDexForAppLikeClasses(dexFiles: List<File>, packageName: String?): List<String> {
+        val result = LinkedHashSet<String>()
+        val suffixes = listOf("App", "Application", "MyApplication", "MyApp", "BaseApp")
+        for (dex in dexFiles) {
+            if (!dex.isFile) continue
+            try {
+                val classes = parseDexClasses(dex)
+                for ((name, _) in classes) {
+                    val dot = name.trimStart('L').trimEnd(';').replace('/', '.')
+                    if (dot.startsWith("android.") || dot.startsWith("androidx.") ||
+                        isStubEntry(dot)) continue
+                    // 优先：以包名开头 + 常见后缀
+                    val pkgPrefix = packageName?.let { dot.startsWith("$it.") || dot == it } ?: false
+                    if (pkgPrefix && suffixes.any { dot.endsWith(it) }) {
+                        result.add(dot)
+                    } else if (dot.endsWith("Application") || dot.endsWith("MyApplication")) {
+                        result.add(dot)
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+        return result.toList()
     }
 
     /**

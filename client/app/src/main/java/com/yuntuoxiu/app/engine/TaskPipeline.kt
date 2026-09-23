@@ -31,6 +31,9 @@ object TaskPipeline {
         SIGN("签名"),
     }
 
+    /** ⭐ v2.2：正则类步骤（可选，UI 可提示用户是否启用） */
+    val REGEX_STEPS = setOf(Step.PATCH, Step.SIG_BYPASS)
+
     /** 步骤状态 */
     data class StepState(
         val step: String,

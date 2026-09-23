@@ -34,16 +34,19 @@ object PipelineRunner {
     /**
      * 执行一键流水线。
      *
-     * @param taskId     任务 ID
-     * @param sourceApk  原始 APK
-     * @param pkg        包名（可选）
-     * @param onProgress 进度回调
+     * @param taskId      任务 ID
+     * @param sourceApk   原始 APK
+     * @param pkg         包名（可选）
+     * @param useRegex    是否启用「正则类步骤」（规则修补 / 去签名校验）。
+     *                    默认 true；false 时跳过这两步（用户可自行选择）。
+     * @param onProgress  进度回调
      * @return 最终 APK（失败为 null）
      */
     fun runOneClick(
         taskId: String,
         sourceApk: File,
         pkg: String?,
+        useRegex: Boolean = true,
         onProgress: (Progress) -> Unit = {},
     ): File? {
         if (!sourceApk.isFile) {
@@ -56,7 +59,7 @@ object PipelineRunner {
         // 一键流水线用独立 work 文件，避免与工具面板互相干扰
         val work = File(wd, "oneclick_work.apk")
         sourceApk.copyTo(work, overwrite = true)
-        LogStore.i(TAG, "[$taskId] 一键流水线开始，work=${work.length()}B")
+        LogStore.i(TAG, "[$taskId] 一键流水线开始，work=${work.length()}B useRegex=$useRegex")
 
         var cur = work
 
@@ -75,19 +78,23 @@ object PipelineRunner {
             onProgress(Progress(1, 7, "去壳清理", "失败(跳过): ${it.message}", false))
         }
 
-        // ② 规则修补
-        onProgress(Progress(2, 7, "规则修补", "开始…", true))
-        runCatching {
-            val out = File(wd, "oneclick_patched.apk")
-            val r = LocalSmaliPatcher.patch(cur, out, null, true, true)
-            if (r.ok && out.isFile && out.length() > 1024) {
-                cur = out
-                onProgress(Progress(2, 7, "规则修补", r.detail, true))
-            } else {
-                onProgress(Progress(2, 7, "规则修补", "无变更，跳过", true))
+        // ② 规则修补（正则类步骤，可选）
+        if (useRegex) {
+            onProgress(Progress(2, 7, "规则修补", "开始…", true))
+            runCatching {
+                val out = File(wd, "oneclick_patched.apk")
+                val r = LocalSmaliPatcher.patch(cur, out, null, true, true)
+                if (r.ok && out.isFile && out.length() > 1024) {
+                    cur = out
+                    onProgress(Progress(2, 7, "规则修补", r.detail, true))
+                } else {
+                    onProgress(Progress(2, 7, "规则修补", "无变更，跳过", true))
+                }
+            }.onFailure {
+                onProgress(Progress(2, 7, "规则修补", "失败(跳过): ${it.message}", false))
             }
-        }.onFailure {
-            onProgress(Progress(2, 7, "规则修补", "失败(跳过): ${it.message}", false))
+        } else {
+            onProgress(Progress(2, 7, "规则修补", "已禁用（未启用正则），跳过", true))
         }
 
         // ③ 本地脱壳
@@ -100,19 +107,39 @@ object PipelineRunner {
 
         if (dexes.isEmpty()) {
             onProgress(Progress(3, 7, "本地脱壳", "未产出 DEX（目标可能未加壳/对抗）", false))
-            // ⚠️ 无 dump 也继续（可能应用本身未加壳）
         } else {
             onProgress(Progress(3, 7, "本地脱壳", "产出 ${dexes.size} 个 dex", true))
-            dexes.forEach { runCatching { it.copyTo(File(dexDir, it.name), true) } }
+        }
+
+        // ③b ⭐ v2.2：DEX 后处理（过滤壳 stub / 去重 / 按 class 数排序 / 命名 classesN）
+        var processedDexes: List<File> = emptyList()
+        if (dexes.isNotEmpty()) {
+            onProgress(Progress(3, 7, "DEX后处理", "过滤壳 stub + 去重 + 排序…", true))
+            runCatching {
+                val postDir = File(wd, "dump_post").apply { mkdirs() }
+                val pr = DexPostProcessor.process(dexes, postDir) { m ->
+                    onProgress(Progress(3, 7, "DEX后处理", m, true))
+                }
+                processedDexes = pr.kept
+                // 同时把原始 dex 归拢到任务 dump 目录（保留原始产物供查看）
+                dexes.forEach { runCatching { it.copyTo(File(dexDir, it.name), true) } }
+                onProgress(Progress(3, 7, "DEX后处理", pr.detail, pr.kept.isNotEmpty()))
+            }.onFailure {
+                onProgress(Progress(3, 7, "DEX后处理", "失败(用原始 dex): ${it.message}", false))
+                processedDexes = dexes
+            }
         }
 
         // ④ DEX 修复
-        if (dexes.isNotEmpty()) {
+        var fixedDir: File? = null
+        if (processedDexes.isNotEmpty()) {
             onProgress(Progress(4, 7, "DEX修复", "开始…", true))
             runCatching {
                 val fixDir = File(wd, "dump_fixed").apply { mkdirs() }
-                val (ok, detail) = DexRepairEngine.repairAll(dexDir, fixDir) { }
-                onProgress(Progress(4, 7, "DEX修复", "修复 $ok 个: $detail", ok > 0))
+                val srcDir = File(wd, "dump_post")
+                val (ok, detail) = DexRepairEngine.repairAll(srcDir, fixDir) { }
+                fixedDir = fixDir
+                onProgress(Progress(4, 7, "DEX修复", "修复 $ok 个", ok > 0))
             }.onFailure {
                 onProgress(Progress(4, 7, "DEX修复", "失败(跳过): ${it.message}", false))
             }
@@ -120,18 +147,22 @@ object PipelineRunner {
             onProgress(Progress(4, 7, "DEX修复", "无 dex，跳过", true))
         }
 
-        // ⑤ DEX 替换
-        if (dexes.isNotEmpty()) {
+        // ⑤ DEX 替换（含真实入口替换）
+        if (processedDexes.isNotEmpty()) {
             onProgress(Progress(5, 7, "DEX替换", "开始…", true))
             runCatching {
-                val fixDir = File(wd, "dump_fixed")
-                val useDir = if (fixDir.isDirectory && fixDir.listFiles()?.isNotEmpty() == true)
-                    fixDir else dexDir
+                val useDir = fixedDir?.takeIf { it.isDirectory && it.listFiles()?.isNotEmpty() == true }
+                    ?: File(wd, "dump_post")
                 val out = File(wd, "oneclick_replaced.apk")
-                val r = LocalRepairEngine.rebuild(cur, LocalUnpackEngine.collectDex(useDir), out, repairDex = false)
+                val r = LocalRepairEngine.rebuild(
+                    cur, LocalUnpackEngine.collectDex(useDir), out,
+                    cleanShell = true, repairDex = false
+                )
                 if (r != null && out.isFile) {
                     cur = out
-                    onProgress(Progress(5, 7, "DEX替换", "替换 ${r.dexCount} 个 dex", true))
+                    onProgress(Progress(5, 7, "DEX替换",
+                        "替换 ${r.dexCount} 个 dex，清壳 ${r.removedShell}，入口=${r.realApp ?: "未变"}",
+                        true))
                 } else {
                     onProgress(Progress(5, 7, "DEX替换", "替换失败，跳过", false))
                 }
@@ -142,13 +173,17 @@ object PipelineRunner {
             onProgress(Progress(5, 7, "DEX替换", "无 dex，跳过", true))
         }
 
-        // ⑥ 去除签名校验（记录原始签名）
-        onProgress(Progress(6, 7, "去除签名校验", "开始…", true))
-        runCatching {
-            val rec = SigBypassEngine.recordAndApply(sourceApk, pkg)
-            onProgress(Progress(6, 7, "去除签名校验", rec.detail, rec.ok))
-        }.onFailure {
-            onProgress(Progress(6, 7, "去除签名校验", "失败(跳过): ${it.message}", false))
+        // ⑥ 去除签名校验（正则类步骤，可选）
+        if (useRegex) {
+            onProgress(Progress(6, 7, "去除签名校验", "开始…", true))
+            runCatching {
+                val rec = SigBypassEngine.recordAndApply(sourceApk, pkg)
+                onProgress(Progress(6, 7, "去除签名校验", rec.detail, rec.ok))
+            }.onFailure {
+                onProgress(Progress(6, 7, "去除签名校验", "失败(跳过): ${it.message}", false))
+            }
+        } else {
+            onProgress(Progress(6, 7, "去除签名校验", "已禁用（未启用正则），跳过", true))
         }
 
         // ⑦ 签名

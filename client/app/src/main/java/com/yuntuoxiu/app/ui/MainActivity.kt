@@ -435,73 +435,63 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val srcApk = task.sourceApk
+        if (srcApk.isBlank() || !File(srcApk).isFile) {
+            showResultDialog("一键脱修", "❌ 源 APK 不存在: $srcApk")
+            return
+        }
+
+        // ⭐ v2.2：正则类步骤（规则修补 / 去签名校验）可选 —— 先询问用户
+        showConfirmDialog(
+            "一键脱修 · 步骤选项",
+            "是否启用「正则类步骤」？\n\n" +
+                    "• 启用：额外执行「规则修补（Manifest/反调试串/壳串正则替换）」\n" +
+                    "  与「去除签名校验（SRPatch 注入）」\n" +
+                    "• 不启用：只跑 去壳清理 → 脱壳 → DEX后处理 → 修复 → 替换 → 签名\n\n" +
+                    "提示：若目标是 SecShell 等抽取壳，且无自定义正则规则，\n" +
+                    "       可不启用正则（更快、更稳）。",
+            "启用正则",
+            danger = false,
+            onCancel = { doRunPipeline(task, useRegex = false) }
+        ) {
+            doRunPipeline(task, useRegex = true)
+        }
+    }
+
+    /** ⭐ v2.2：实际执行一键流水线（调 PipelineRunner） */
+    private fun doRunPipeline(task: TaskMetaView, useRegex: Boolean) {
         lifecycleScope.launch {
             val tid = task.taskId
-            val log = StringBuilder("== 一键脱修(本地) · $tid ==\n\n")
-            log.append("全本地化：脱壳 → 修复 → 签名，均在 App 内完成\n\n")
+            val log = StringBuilder("== 一键脱修(流水线) · $tid ==\n\n")
+            log.append("全本地化：脱壳 → DEX后处理 → 修复 → 替换(含入口) → 签名\n")
+            log.append("正则步骤：${if (useRegex) "启用" else "禁用"}\n\n")
 
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val pkg = task.lookupPackage
-                    val srcApk = task.sourceApk
-
-                    // ① 本地脱壳
-                    log.append("[1/3] 本地脱壳...\n")
-                    val dexes = if (srcApk.isNotBlank() && File(srcApk).isFile) {
-                        com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpFile(
-                            this@MainActivity, File(srcApk)) { }
-                    } else if (!pkg.isNullOrBlank()) {
-                        com.yuntuoxiu.app.engine.LocalUnpackEngine.dumpInstalled(
-                            this@MainActivity, pkg) { }
-                    } else emptyList()
-                    if (dexes.isEmpty()) {
-                        // ⭐ v2.2：附上真实失败诊断（:black 崩溃 / ProviderCall / 字段缺失 等）
-                        val dumpDir = com.yuntuoxiu.app.engine.LocalUnpackEngine.getDumpDir()
-                        val diag = com.yuntuoxiu.app.engine.LocalUnpackEngine
-                            .buildDumpFailureDiagnosis(dumpDir, pkg ?: "")
-                        return@withContext "❌ 脱壳未产出 DEX\n\n$diag"
+                    val src = File(task.sourceApk)
+                    val out = com.yuntuoxiu.app.engine.PipelineRunner.runOneClick(
+                        tid, src, task.lookupPackage, useRegex
+                    ) { p ->
+                        // 进度写日志（跨线程安全：仅 stringBuilder 同步）
+                        synchronized(log) {
+                            log.append("[${p.stepIndex}/7] ${p.stepLabel}: ${p.message}\n")
+                        }
                     }
-                    log.append("      ✅ " + dexes.size + " 个 dex\n")
-
-                    // 归拢到任务 dump
-                    val taskDir = File(YunTuoXiuApp.CLOUD_ROOT, "tasks/$tid")
-                    val dumpDir = File(taskDir, "dump"); dumpDir.mkdirs()
-                    dexes.forEach { runCatching { it.copyTo(File(dumpDir, it.name), true) } }
-
-                    // ② 本地修复
-                    log.append("[2/3] 本地修复(清壳+重组)...\n")
-                    if (srcApk.isBlank() || !File(srcApk).isFile) {
-                        return@withContext "❌ 缺少原 APK，无法重组"
-                    }
-                    val repaired = File(taskDir, "build/repaired.apk")
-                    val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
-                        File(srcApk), dexes, repaired, cleanShell = true
-                    ) ?: return@withContext "❌ 重组失败"
-                    log.append("      ✅ dex=${res.dexCount} 清壳=${res.removedShell}\n")
-
-                    // ③ 本地签名
-                    log.append("[3/3] 本地签名...\n")
-                    val signed = File(taskDir, "build/signed.apk")
-                    val sr = com.yuntuoxiu.app.engine.LocalApkSigner.sign(
-                        repaired, signed, null, this@MainActivity)
-                    if (!sr.ok) {
-                        log.append("      ⚠️ 签名失败: ${sr.detail}\n")
-                        log.append("      修复产物: ${repaired.absolutePath}\n")
-                        "⚠️ 脱壳+修复完成（签名失败）"
-                    } else {
-                        log.append("      ✅ ${signed.absolutePath}\n")
+                    if (out != null && out.isFile) {
                         // 复制一份到工作区根，便于查找
                         runCatching {
-                            signed.copyTo(File(YunTuoXiuApp.WORKSPACE_ROOT, "云脱修-$tid.apk"), true)
+                            out.copyTo(File(YunTuoXiuApp.WORKSPACE_ROOT, "云脱修-$tid.apk"), true)
                         }
-                        "✅ 完成"
+                        "✅ 完成: ${out.absolutePath}"
+                    } else {
+                        "❌ 一键流水线失败（详见上方步骤日志）"
                     }
                 } catch (e: Throwable) {
                     "❌ 异常: ${e.message}"
                 }
             }
             log.append("\n$result\n")
-            showResultDialog("一键脱修(本地) · $task", log.toString())
+            showResultDialog("一键脱修(流水线)", log.toString())
             refreshTasks()
         }
     }
@@ -1584,13 +1574,14 @@ class MainActivity : AppCompatActivity() {
         message: String,
         confirmText: String = "确定",
         danger: Boolean = false,
+        onCancel: () -> Unit = {},
         onConfirm: () -> Unit
     ) {
         val dlg = AlertDialog.Builder(this, R.style.YtxDialog)
             .setTitle(title)
             .setMessage(message)
             .setPositiveButton(confirmText) { _, _ -> onConfirm() }
-            .setNegativeButton("取消", null)
+            .setNegativeButton("取消") { _, _ -> onCancel() }
             .create()
         dlg.show()
         styleDialogWindow(dlg)

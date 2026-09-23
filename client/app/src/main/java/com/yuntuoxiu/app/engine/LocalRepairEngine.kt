@@ -50,6 +50,51 @@ object LocalRepairEngine {
     )
 
     /**
+     * ⭐ v2.2：厂商策略表提供的清理匹配串（运行时合并）。
+     *   覆盖 ShellStrategies 的 47 厂商（so 前缀 / assets / 精确名）。
+     */
+    private fun strategyPatterns(): List<String> =
+        try { com.yuntuoxiu.app.worker.ShellStrategies.allCleanPatterns() }
+        catch (_: Throwable) { emptyList() }
+
+    /**
+     * ⭐ v2.2：壳 so 的正则（容忍包名/版本后缀），与 ShellDetect.SO_SIG 对齐。
+     */
+    private val SHELL_SO_REGEX = listOf(
+        Regex("^libshell-super[\\.-][^/]*\\.so$"),
+        Regex("^libshella-\\d[^/]*\\.so$"),
+        Regex("^libshell-super\\.so$"),
+        Regex("^libshellsuper\\.so$"),
+        Regex("^libnesec.*\\.so$"),
+        Regex("^libsecneo.*\\.so$"),
+        Regex("^libolive.*\\.so$"),
+        Regex("^libjiagu.*\\.so$"),
+        Regex("^libmetasec.*\\.so$"),
+        Regex("^libnpth[_.].*\\.so$"),
+        Regex("^libDexHelper.*\\.so$"),
+        Regex("^libmobisec.*\\.so$"),
+        Regex("^libijiami.*\\.so$"),
+        Regex("^libvenSec.*\\.so$"),
+        Regex("^libvenustech.*\\.so$"),
+        Regex("^libsqlen_venus.*\\.so$"),
+        Regex("^venCache.*"),
+        Regex("^libxloader.*\\.so$"),
+        Regex("^maindata.*"),
+    )
+
+    /**
+     * ⭐ v2.2：壳 assets 的正则（容忍后缀）。
+     */
+    private val SHELL_ASSET_REGEX = listOf(
+        Regex("assets/0OO00l111l1l.*"),
+        Regex("assets/o0oooOO0ooOo\\.dat.*"),
+        Regex("assets/.*venCache.*"),
+        Regex("assets/.*maindata.*"),
+        Regex("assets/.*tosversion.*"),
+        Regex("assets/.*secure.*\\.dat$"),
+    )
+
+    /**
      * 合并「dump 的 DEX」到「原 APK」，产出修复后的 APK。
      *
      * v2.0：新增「先用 DexRepairEngine 修复 dump 的 dex」，
@@ -69,6 +114,7 @@ object LocalRepairEngine {
         outApk: File,
         cleanShell: Boolean = true,
         repairDex: Boolean = true,
+        realApp: String? = null,
         onProgress: (String) -> Unit = {}
     ): Result? {
         if (!srcApk.isFile) {
@@ -83,9 +129,18 @@ object LocalRepairEngine {
         var removedShell = 0
         var replacedDex = 0
         var repairedDex = 0
+        var manifestChanged = false
+        var realAppResolved = realApp
         var totalOut = 0L
 
         try {
+            // ⭐ v2.2：若未显式提供 realApp，则自动探测真实 Application 入口
+            if (realAppResolved.isNullOrBlank()) {
+                onProgress("自动探测真实 Application 入口...")
+                val found = RealEntryFinder.find(dexFiles, null)
+                realAppResolved = found.className
+                onProgress("真实入口: ${realAppResolved ?: "未识别"}（来源=${found.source}）")
+            }
             // ⭐ v2.0：先修复所有 dex（magic/checksum/sha1）
             val finalDexes: List<File> = if (repairDex) {
                 onProgress("修复 DEX（${dexFiles.size} 个）...")
@@ -130,7 +185,18 @@ object LocalRepairEngine {
                     continue
                 }
 
-                val data = zin.getInputStream(e).readBytes()
+                var data = zin.getInputStream(e).readBytes()
+
+                // ⭐ v2.2：替换 Manifest 里的壳入口为真实 Application
+                if (!realAppResolved.isNullOrBlank() && name == "AndroidManifest.xml" && data.isNotEmpty()) {
+                    val patched = LocalSmaliPatcher.patchManifestEntry(data, realAppResolved)
+                    if (patched != null && !patched.contentEquals(data)) {
+                        data = patched
+                        manifestChanged = true
+                        onProgress("Manifest: 入口已替换为 $realAppResolved")
+                    }
+                }
+
                 val outEntry = if (low.endsWith(".so") || low.endsWith("resources.arsc"))
                     StoredEntry(name, data) else ZipEntry(name).apply { time = e.time }
                 zout.putNextEntry(outEntry)
@@ -161,8 +227,8 @@ object LocalRepairEngine {
             zout.close()
             zin.close()
 
-            onProgress("重建完成: dex=$replacedDex(修复$repairedDex) 清壳=$removedShell 大小=${totalOut / 1024}KB")
-            return Result(outApk, replacedDex, removedShell, totalOut)
+            onProgress("重建完成: dex=$replacedDex(修复$repairedDex) 清壳=$removedShell 入口=$realAppResolved 大小=${totalOut / 1024}KB")
+            return Result(outApk, replacedDex, removedShell, totalOut, manifestChanged, realAppResolved)
         } catch (t: Throwable) {
             LogStore.e(TAG, "重建失败: ${t.javaClass.simpleName}: ${t.message}")
             onProgress("重建失败: ${t.javaClass.simpleName}: ${t.message}")
@@ -174,7 +240,9 @@ object LocalRepairEngine {
         val outApk: File,
         val dexCount: Int,
         val removedShell: Int,
-        val totalBytes: Long
+        val totalBytes: Long,
+        val manifestChanged: Boolean = false,
+        val realApp: String? = null,
     )
 
     /** 是否为壳相关条目 */
@@ -182,9 +250,17 @@ object LocalRepairEngine {
         if (bn.endsWith(".so")) {
             if (SHELL_SO_EXACT.contains(bn)) return true
             if (SHELL_SO_PREFIX.any { bn.startsWith(it) }) return true
+            // ⭐ v2.2：正则（容忍包名/版本后缀，如 libshell-super.<pkg>.so）
+            if (SHELL_SO_REGEX.any { it.matches(bn) }) return true
+            // ⭐ v2.2：厂商策略表（47 厂商）
+            if (strategyPatterns().any { p -> p.isNotBlank() && bn.contains(p.lowercase()) }) return true
         }
         if (low.contains("assets/")) {
             if (SHELL_ASSET_KEYS.any { low.contains(it) }) return true
+            // ⭐ v2.2：assets 正则
+            if (SHELL_ASSET_REGEX.any { it.containsMatchIn(low) }) return true
+            // ⭐ v2.2：厂商策略表 assets
+            if (strategyPatterns().any { p -> p.isNotBlank() && low.contains(p.lowercase()) }) return true
         }
         return false
     }
