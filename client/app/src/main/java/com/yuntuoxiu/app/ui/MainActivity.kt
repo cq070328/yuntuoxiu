@@ -704,7 +704,16 @@ class MainActivity : AppCompatActivity() {
                                         d.copyTo(File(dest, d.name), overwrite = true); n++
                                     } catch (_: Throwable) {}
                                 }
-                                "✅ 本地脱壳 $n 个 dex -> ${dest.absolutePath}"
+                                // ⭐ v2.4：一并拷贝沙箱运行时真实入口 entry.txt（Layout Inspect 思路）
+                                var entryMsg = ""
+                                try {
+                                    val ef = File(dexes.first().parentFile, "entry.txt")
+                                    if (ef.isFile) {
+                                        ef.copyTo(File(dest, "entry.txt"), overwrite = true)
+                                        entryMsg = "，真实入口=${ef.readText().trim()}"
+                                    }
+                                } catch (_: Throwable) {}
+                                "✅ 本地脱壳 $n 个 dex -> ${dest.absolutePath}$entryMsg"
                             }
                         } catch (e: Throwable) {
                             "本地脱壳失败: ${e.message}"
@@ -750,7 +759,12 @@ class MainActivity : AppCompatActivity() {
                             if (dexes.isEmpty()) return@withContext "❌ 无可用 DEX"
                             val repaired = File(taskDir, "build/repaired.apk")
                             val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
-                                File(t.sourceApk), dexes, repaired, cleanShell = false
+                                File(t.sourceApk), dexes, repaired, cleanShell = false,
+                                // ⭐ v2.4：传沙箱运行时真实入口（entry.txt）
+                                runtimeEntry = try {
+                                    val ef = File(dumpDir, "entry.txt")
+                                    if (ef.isFile) ef.readText().trim().ifBlank { null } else null
+                                } catch (_: Throwable) { null }
                             ) ?: return@withContext "❌ 本地重组失败"
                             // 签名
                             val signed = File(taskDir, "build/signed.apk")
@@ -814,7 +828,13 @@ class MainActivity : AppCompatActivity() {
                     val outApk = java.io.File(taskDir, "build/patched.apk")
                     val res = com.yuntuoxiu.app.engine.LocalSmaliPatcher.patch(
                         java.io.File(task.sourceApk), outApk,
-                        realApp = null,
+                        // ⭐ v2.4：优先用沙箱运行时真实入口（entry.txt），否则 null（走静态推断）
+                        realApp = runCatching {
+                            val dumpDir = java.io.File(YunTuoXiuApp.CLOUD_ROOT,
+                                "tasks/${task.taskId}/dump")
+                            val ef = java.io.File(dumpDir, "entry.txt")
+                            if (ef.isFile) ef.readText().trim().ifBlank { null } else null
+                        }.getOrNull(),
                         cleanManifest = true,
                         cleanAntiDebug = full
                     ) { }

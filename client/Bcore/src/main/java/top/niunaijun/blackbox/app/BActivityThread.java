@@ -233,31 +233,54 @@ public class BActivityThread extends IBActivityThread.Stub {
                 Log.e(TAG, "handleBindApplication: ", e);
             }
 
-            // ⭐⭐⭐ v2.2 通用修复：确保 loadedApkClassLoader 指向【目标 App】。
+            // ⭐⭐⭐ v2.3 关键修复：确保 loadedApkClassLoader 指向【目标 App】。
             //
-            //   实测：`loadedApk.getClassLoader()` 在沙箱里拿到的是**宿主**的
-            //   PathClassLoader（DexPathList 指向 com.yuntuoxiu.app/base.apk），
-            //   导致：① dump 出宿主 dex  ② Class.forName 找不到目标的壳 Application。
+            //   v2.2 的失败根因（见 blackbox.log）：
+            //     `new PathClassLoader(".../virtual/data/app/<pkg>/base.apk", ...)`
+            //     → SecurityException: Writable dex file ... is not allowed
             //
-            //   修复：用 PathClassLoader（**不校验可写目录**，DexClassLoader 会被
-            //   SecurityException 拒绝）加载沙箱安装的目标 APK。
+            //   Android 7+ 的 DexFile::Open 校验逻辑：
+            //     if (access(path, W_OK) == 0) → “Writable dex file is not allowed”
+            //   即：只要 APK 文件**可写**，就被拒绝加载。
+            //   而沙箱安装的 base.apk 落在应用私有可写目录 → 必然可写 → 必然被拒。
+            //
+            //   修复：在建 ClassLoader 前，把 base.apk 的**写权限去掉**（chmod a-w）。
+            //   文件仍可读 → PathClassLoader 校验通过 → 目标 loader 建立成功。
             //   —— 通用：对所有目标 App 都适用。
             try {
                 File targetApk = BEnvironment.getBaseApkDir(packageName);
                 if (targetApk.isFile() && targetApk.length() > 0) {
                     File appLibDir = BEnvironment.getAppLibDir(packageName);
-                    appLibDir.mkdirs();
+                    appLibDir.mkdirs();   // ★ 先建 lib 目录（否则后面给父目录去写权限后无法再创建）
+                    // ★ 去写权限（解决 Writable dex 校验）
+                    boolean unwritable = makeUnwritable(targetApk);
+                    // ★ 兜底：部分 ROM 还会检查 dex 所在「目录」是否可写 → 目录也去写权限
+                    try {
+                        File apkParent = targetApk.getParentFile();
+                        if (apkParent != null && apkParent.isDirectory()) {
+                            android.system.Os.chmod(apkParent.getAbsolutePath(), 0500);
+                        }
+                    } catch (Throwable ignored) {
+                    }
                     ClassLoader target = new dalvik.system.PathClassLoader(
                             targetApk.getAbsolutePath(),
                             appLibDir.getAbsolutePath(),
                             ClassLoader.getSystemClassLoader());
+                    // 触发一次真实加载，确保 loader 真的可用（否则延迟到 dump 时才暴露）
+                    target.loadClass("android.app.Application");
                     loadedApkClassLoader = target;
                     BlackBoxCore.bbxLog("handleBindApplication: [通用] 目标 PathClassLoader 已建立: "
-                            + targetApk.getAbsolutePath() + " size=" + targetApk.length());
+                            + targetApk.getAbsolutePath() + " size=" + targetApk.length()
+                            + " unwritable=" + unwritable + " canWrite=" + targetApk.canWrite());
+                } else {
+                    BlackBoxCore.bbxLog("handleBindApplication: [通用] 目标 APK 不存在: "
+                            + targetApk.getAbsolutePath());
                 }
             } catch (Throwable t) {
+                // ⭐ v2.3：失败必须显式记录（这是“脱出宿主 dex”的关键断点）
                 BlackBoxCore.bbxLog("handleBindApplication: [通用] PathClassLoader 失败: "
-                        + t.getClass().getSimpleName() + ": " + t.getMessage());
+                        + t.getClass().getSimpleName() + ": " + t.getMessage()
+                        + " → 后续将无法加载目标壳 Application，可能只 dump 到宿主 dex");
             }
 
             BlackBoxCore.get().getAppLifecycleCallback().beforeCreateApplication(packageName, processName, packageContext, loadedApk);
@@ -322,9 +345,15 @@ public class BActivityThread extends IBActivityThread.Stub {
                     }
                     BlackBoxCore.bbxLog("handleBindApplication: [方案X] 手动构造 Application: "
                             + appClassName);
-                    ClassLoader cl = (loadedApkClassLoader != null)
-                            ? loadedApkClassLoader
-                            : packageContext.getClassLoader();
+                    // ⭐ v2.3：优先用「已成功建立的 目标 PathClassLoader」。
+                    //   注意：packageContext.getClassLoader() 在沙箱里往往仍是**宿主** loader，
+                    //   用它 Class.forName 会加载到宿主的 Application → 壳永远不会跑。
+                    //   因此只在已确认拿到目标 loader 时才继续，避免“假成功”。
+                    ClassLoader cl = loadedApkClassLoader;
+                    if (cl == null) {
+                        BlackBoxCore.bbxLog("handleBindApplication: [方案X] 无可用目标 ClassLoader，"
+                                + "跳过手动构造（避免误用宿主 loader 触发假解密）");
+                    } else {
                     Class<?> appClazz = Class.forName(appClassName, true, cl);
                     Object appObj = appClazz.newInstance();
                     if (appObj instanceof Application) {
@@ -350,6 +379,7 @@ public class BActivityThread extends IBActivityThread.Stub {
                         }
                         application = app;
                     }
+                    } // end else (cl != null)
                 } catch (Throwable e) {
                     BlackBoxCore.bbxLog("handleBindApplication: [方案X] 构造失败: "
                             + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -358,6 +388,35 @@ public class BActivityThread extends IBActivityThread.Stub {
 
             mInitialApplication = application;
             ActivityThread.mInitialApplication.set(BlackBoxCore.mainThread(), mInitialApplication);
+
+            // ⭐⭐⭐ v2.4【集成 Layout Inspect「真实入口」思路】：运行时解析真实 Application 类名。
+            //   背景：脱壳后要把 Manifest 的 application:name 从「壳代理类」替换回「真实入口」，
+            //         否则重打包的 APK 起不来。静态 dex 扫描（RealEntryFinder）对抽取壳/VMP 壳
+            //         常常失效（真实类被壳动态创建，dex 里看不到）。
+            //   Layout Inspect 的强项正是「运行时直接拿到真实 Application」——这里复刻：
+            //     1) 壳 Application 已构造/已跑 onCreate（解密已完成）
+            //     2) 反射扫描其字段，找「是 Application 实例但类名 != 壳类名」的对象 → 真实入口
+            //     3) 写入 dump 目录 entry.txt，供 App 层 RealEntryFinder 作为最高优先级来源
+            try {
+                String realEntry = resolveRealApplicationName(application);
+                if (realEntry != null) {
+                    File entryFile = new File(result.dir, "entry.txt");
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(entryFile);
+                    fos.write(realEntry.getBytes("UTF-8"));
+                    fos.flush();
+                    fos.close();
+                    BlackBoxCore.bbxLog("handleBindApplication: [真实入口] 运行时解析到 " + realEntry
+                            + " → 已写入 " + entryFile.getAbsolutePath());
+                } else {
+                    BlackBoxCore.bbxLog("handleBindApplication: [真实入口] 运行时未解析到"
+                            + "（application=" + (application == null ? "null"
+                            : application.getClass().getName()) + "）");
+                }
+            } catch (Throwable t) {
+                BlackBoxCore.bbxLog("handleBindApplication: [真实入口] 写 entry.txt 失败: "
+                        + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+
             BlackBoxCore.bbxLog("handleBindApplication: application 构造完成 application=" +
                     (application == null ? "null" : application.getClass().getName())
                     + " pkg==proc? " + Objects.equals(packageName, processName));
@@ -409,6 +468,17 @@ public class BActivityThread extends IBActivityThread.Stub {
             } catch (InterruptedException ie) {
                 Log.e(TAG, "handleDumpDex: ", ie);
             }
+            // ⭐⭐⭐ v2.3：dump 前先做「壳解密成功性」校验。
+            //   若目标 loader 为空、且不存在任何「非宿主的、clazz 数 > 500 的 dex」，
+            //   则说明壳根本没解密（多为反调试/签名校验触发），
+            //   此时直接失败回执，避免把宿主 dex 当成成功产物。
+            if (classLoader == null) {
+                BlackBoxCore.bbxLog("handleDumpDex: ⚠️ 目标 ClassLoader 为空，"
+                        + "壳 Application 未构造 → 真实 dex 未解密。"
+                        + "仍然执行 dump（可能只捞到宿主/壳 dex），但会标记结果。");
+            } else {
+                BlackBoxCore.bbxLog("handleDumpDex: 目标 ClassLoader 非空，壳已具备解密条件");
+            }
             try {
                 VMCore.cookieDumpDex(classLoader, packageName);
             } finally {
@@ -425,8 +495,29 @@ public class BActivityThread extends IBActivityThread.Stub {
                             + " (exists=" + dir.exists() + ")");
                     BlackBoxCore.getBDumpManager().noticeMonitor(result.dumpError("not found dex file"));
                 } else {
-                    BlackBoxCore.bbxLog("handleDumpDex: 产出 " + dumped.length + " 个文件");
-                    BlackBoxCore.getBDumpManager().noticeMonitor(result.dumpSuccess());
+                    // ⭐ v2.3：统计「疑似真实目标 dex」数量（非宿主、class 数够大），
+                    //   并在产物里写出一个来源清单，供上层判断“是不是只拿到宿主 dex”。
+                    int real = 0;
+                    int hostLike = 0;
+                    StringBuilder names = new StringBuilder();
+                    for (File f : dumped) {
+                        if (!f.isFile() || !f.getName().endsWith(".dex")) continue;
+                        if (names.length() > 0) names.append(",");
+                        names.append(f.getName());
+                        if (isHostLikeDex(f)) hostLike++;
+                        else if (countClasses(f) >= 300) real++;
+                    }
+                    BlackBoxCore.bbxLog("handleDumpDex: 产出 " + dumped.length + " 个文件，"
+                            + "疑似真实目标 dex=" + real + "，疑似宿主 dex=" + hostLike
+                            + "，清单=[" + names + "]");
+                    if (real == 0) {
+                        // 只拿到宿主/壳 dex → 明确失败，避免误导为“脱壳成功”
+                        BlackBoxCore.getBDumpManager().noticeMonitor(
+                                result.dumpError("only shell/host dex dumped, real dex not decrypted"
+                                        + " (hostLike=" + hostLike + ")"));
+                    } else {
+                        BlackBoxCore.getBDumpManager().noticeMonitor(result.dumpSuccess());
+                    }
                 }
                 BlackBoxCore.get().uninstallPackage(packageName);
                 Process.killProcess(Process.myPid());
@@ -442,6 +533,231 @@ public class BActivityThread extends IBActivityThread.Stub {
             Log.e(TAG, "createPackageContext: ", e);
         }
         return null;
+    }
+
+    /**
+     * ⭐ v2.3：去除 APK 文件的「写权限」，绕过 Android 的 Writable dex 校验。
+     *
+     * 背景：
+     *   Android 7+（libart DexFile::Open）在加载 dex 时校验：
+     *     if (access(path, W_OK) == 0) → 抛 SecurityException:
+     *         "Writable dex file '...' is not allowed"
+     *   沙箱把目标 APK 拷贝到应用私有可写目录（virtual/data/app/&lt;pkg&gt;/base.apk），
+     *   该文件对宿主进程天然可写 → PathClassLoader 必然被拒 →
+     *   目标 ClassLoader 建立失败 → 壳 Application 构造失败 → 脱出宿主 dex。
+     *
+     * 修复：在加载前把文件权限改为「只读」（去掉 W 位）。
+     *   文件仍可读（R 位保留）→ DexFile 加载校验通过。
+     *
+     * 实现分三级兜底（任一成功即可）：
+     *   ① android.system.Os.chmod（最直接）
+     *   ② File.setWritable(false)（Java API）
+     *   ③ 反射 access 校验确认（仅日志）
+     *
+     * @return 是否成功变为不可写
+     */
+    private static boolean makeUnwritable(File file) {
+        if (file == null || !file.isFile()) return false;
+        // 已经是不可写 → 直接返回
+        if (!file.canWrite()) return true;
+        // ① Os.chmod：0600 → 0400（去掉写位，保留读位）
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                android.system.Os.chmod(file.getAbsolutePath(), 0400);
+            }
+        } catch (Throwable ignored) {
+        }
+        if (!file.canWrite()) return true;
+        // ② Java API
+        try {
+            file.setWritable(false, false);
+        } catch (Throwable ignored) {
+        }
+        if (!file.canWrite()) return true;
+        // ③ FileUtils.chmod 兜底
+        try {
+            FileUtils.chmod(file.getAbsolutePath(), FileUtils.FileMode.MODE_IRUSR);
+        } catch (Throwable ignored) {
+        }
+        return !file.canWrite();
+    }
+
+    /**
+     * ⭐⭐⭐ v2.4【集成 Layout Inspect「真实入口」思路】：运行时解析真实 Application 类名。
+     *
+     * 问题：脱壳后重打包时，Manifest 的 `application:name` 仍是壳代理类
+     *   （如 com.tencent.StubShell.TxAppEntry / com.stub.StubApp），
+     *   直接替换会导致壳再次运行；必须替换回「真实入口」，重打包后 App 才能正常启动。
+     *
+     * Layout Inspect 的做法是「运行时直接拿真实 Application」——这里复刻：
+     *   壳（如腾讯御安全 SMZ）在 attachBaseContext / onCreate 中会创建**真实的 Application 实例**，
+     *   并把它作为自己的字段（mRealApplication / mBase / realApplication 等）或
+     *   superclass 之外的引用持有。我们反射遍历壳 Application 的字段，找：
+     *     · 类型是 android.app.Application 的对象
+     *     · 其类名 **不是**壳类名、不是 android.app.*、不是宿主类
+     *   → 即为真实入口。
+     *
+     * 兜底：若壳 Application 本身就不是「壳类名」（说明 Manifest 已直接指向真实入口），
+     *   或系统默认 Application，也返回其真实类名。
+     *
+     * @return 真实 Application 全限定类名；无法确定返回 null
+     */
+    private static String resolveRealApplicationName(Application app) {
+        if (app == null) return null;
+        String shellName = app.getClass().getName();
+
+        // ① 若当前 Application 明显不是壳代理类 → 它本身可能就是真实入口
+        //    （例如沙箱直接构造出真实 Application 的场景）
+        if (!isStubApplicationName(shellName) && !shellName.equals("android.app.Application")) {
+            // 再确认它不是宿主（云脱修/黑盒）自己的 Application
+            if (!shellName.startsWith("com.yuntuoxiu.") && !shellName.startsWith("top.niunaijun.")) {
+                BlackBoxCore.bbxLog("resolveRealApplicationName: 当前 Application 非壳类，直接采用: " + shellName);
+                return shellName;
+            }
+        }
+
+        // ② 反射遍历字段，找真实 Application 实例（壳常持有它）
+        String best = scanForRealAppInObject(app, 0);
+        if (best != null) return best;
+
+        // ③ 遍历到找不到：若壳类名本身不是壳特征（也许已加密过），仍返回它自己的名字兜底
+        if (!isStubApplicationName(shellName)) {
+            return shellName;
+        }
+        return null;
+    }
+
+    /** 判断类名是否「壳代理 Application」特征 */
+    private static boolean isStubApplicationName(String name) {
+        if (name == null) return false;
+        return name.startsWith("com.stub.") || name.startsWith("com.qihoo.")
+                || name.startsWith("com.secneo.") || name.startsWith("com.tencent.StubShell")
+                || name.startsWith("com.tencent.bugly") || name.contains("StubApp")
+                || name.contains("ApplicationWrapper") || name.contains("TxAppEntry")
+                || name.contains("ProxyApplication") || name.contains("wrapper.proxyapplication")
+                || name.contains("StubApplication");
+    }
+
+    /** 在对象（含其父类）字段中递归查找真实 Application 实例（限深 3 层，防循环） */
+    private static String scanForRealAppInObject(Object obj, int depth) {
+        if (obj == null || depth > 3) return null;
+        Class<?> clazz = obj.getClass();
+        // 只看自己的类（含静态字段）
+        Class<?> c = clazz;
+        while (c != null && c != Object.class) {
+            Field[] fields;
+            try {
+                fields = c.getDeclaredFields();
+            } catch (Throwable t) {
+                c = c.getSuperclass();
+                continue;
+            }
+            for (Field f : fields) {
+                try {
+                    Class<?> ft = f.getType();
+                    if (!Application.class.isAssignableFrom(ft)) continue;
+                    f.setAccessible(true);
+                    Object v = f.get(obj);
+                    if (v == null) continue;
+                    String vn = v.getClass().getName();
+                    if (vn.equals(clazz.getName())) continue;              // 自引用
+                    if (vn.equals("android.app.Application")) continue;      // 系统默认
+                    if (vn.startsWith("com.yuntuoxiu.") || vn.startsWith("top.niunaijun.")) continue; // 宿主
+                    if (isStubApplicationName(vn)) {
+                        // 字段值是「另一层壳」→ 继续往里找
+                        String deeper = scanForRealAppInObject(v, depth + 1);
+                        if (deeper != null) return deeper;
+                        continue;
+                    }
+                    BlackBoxCore.bbxLog("scanForRealApp: 命中真实 Application 字段 "
+                            + c.getName() + "#" + f.getName() + " = " + vn);
+                    return vn;
+                } catch (Throwable ignored) {
+                }
+            }
+            c = c.getSuperclass();
+        }
+        return null;
+    }
+
+    /**
+     * ⭐ v2.3：判断某 dex 文件是否「疑似宿主（云脱修自己）的 dex」。
+     *
+     * 判定依据（任一命中即判为宿主）：
+     *   ① 命中宿主专属类描述符/包名（`Lcom/yuntuoxiu/app`、`Ltop/niunaijun/blackbox` 等）
+     *   ② 命中宿主 Application 类名
+     *
+     * 说明：宿主与目标处于**同一 :p0 进程**，内存扫描必然扫到宿主 dex，
+     *   这里用于在回执阶段把宿主 dex 与目标真实 dex 区分开。
+     */
+    private static boolean isHostLikeDex(File dex) {
+        if (dex == null || !dex.isFile()) return false;
+        java.io.FileInputStream in = null;
+        try {
+            in = new java.io.FileInputStream(dex);
+            // 只扫前 8MB（特征串集中在字符串池/头部）
+            int scanLen = (int) Math.min(dex.length(), 8 * 1024 * 1024);
+            byte[] buf = new byte[scanLen];
+            int read = 0;
+            while (read < scanLen) {
+                int n = in.read(buf, read, scanLen - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            String text = new String(buf, 0, read, "ISO-8859-1");
+            String[] markers = new String[]{
+                    "Lcom/yuntuoxiu/app",
+                    "com/yuntuoxiu/app",
+                    "Ltop/niunaijun/blackbox",
+                    "top/niunaijun/blackbox",
+                    "Lcom/ai/assistance/operit",
+                    "com/ai/assistance/operit",
+                    "Lcom/stub/StubApp",
+                    "Lcom/tencent/StubShell",
+                    "Lcom/secneo/apkwrapper",
+                    "Lcom/qihoo/util",
+            };
+            int hits = 0;
+            for (String m : markers) {
+                int idx = text.indexOf(m);
+                if (idx >= 0) hits++;
+            }
+            // 宿主特征命中 >= 2 个，或命中宿主包名 → 判为宿主
+            return hits >= 2
+                    || text.contains("Lcom/yuntuoxiu/app")
+                    || text.contains("Ltop/niunaijun/blackbox");
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            if (in != null) try { in.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    /**
+     * ⭐ v2.3：读取 dex 头部 0x60 处的 class_defs_size（class 数）。
+     */
+    private static int countClasses(File dex) {
+        if (dex == null || !dex.isFile() || dex.length() < 0x64) return 0;
+        java.io.FileInputStream in = null;
+        try {
+            in = new java.io.FileInputStream(dex);
+            byte[] h = new byte[0x64];
+            int read = 0;
+            while (read < h.length) {
+                int n = in.read(h, read, h.length - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            if (read < 0x64) return 0;
+            return (h[0x60] & 0xFF)
+                    | ((h[0x61] & 0xFF) << 8)
+                    | ((h[0x62] & 0xFF) << 16)
+                    | ((h[0x63] & 0xFF) << 24);
+        } catch (Throwable t) {
+            return 0;
+        } finally {
+            if (in != null) try { in.close(); } catch (Throwable ignored) {}
+        }
     }
 
     /**

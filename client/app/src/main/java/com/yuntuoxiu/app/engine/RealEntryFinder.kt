@@ -50,13 +50,30 @@ object RealEntryFinder {
      * @param dexFiles   dump 出的 dex 列表
      * @param packageName 目标包名（用于启发）
      * @param manifestMeta 从 Manifest 提取的 meta-data（key→value，可空）
+     * @param runtimeEntry  ⭐ v2.4：沙箱运行时解析出的真实入口（来自 dump 目录 entry.txt）。
+     *                      这是**最高优先级**来源 —— 等价于 Layout Inspect「运行时直接拿真实
+     *                      Application」的能力，对抽取壳/VMP 壳（静态 dex 看不到真实类）尤其有效。
      */
     fun find(
         dexFiles: List<File>,
         packageName: String?,
         manifestMeta: Map<String, String> = emptyMap(),
+        runtimeEntry: String? = null,
     ): Found {
         val candidates = LinkedHashSet<String>()
+
+        // ⓪ ⭐ v2.4：运行时入口（最高优先级）—— 直接采用沙箱回传的真实 Application 类名
+        if (!runtimeEntry.isNullOrBlank()) {
+            val dot = runtimeEntry.trim().trimStart('.').replace('/', '.').trimEnd(';')
+                .removePrefix("L")
+            if (dot.isNotBlank() && !isStubEntry(dot) && dot != "android.app.Application") {
+                LogStore.i(TAG, "采用运行时真实入口: $dot")
+                return Found(dot, "runtime(sandbox)", listOf(dot),
+                    "运行时（沙箱构造 Application 时）解析到真实入口 $dot")
+            } else if (dot.isNotBlank()) {
+                LogStore.w(TAG, "运行时入口 $dot 疑似壳/系统类，忽略，继续静态探测")
+            }
+        }
 
         // ① Manifest meta-data
         for (k in META_KEYS) {

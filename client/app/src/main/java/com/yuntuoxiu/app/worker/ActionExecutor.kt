@@ -245,7 +245,8 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
                 mapOf("fail_code" to "REPAIR_NO_DEX"))
         }
         val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
-            java.io.File(origApk), dexes, outApk, cleanShell = false
+            java.io.File(origApk), dexes, outApk, cleanShell = false,
+            runtimeEntry = readRuntimeEntry(dexDir)
         ) { Log.i(TAG, "  $it") }
             ?: return ActionResponse(false, "本地重组失败", mapOf("fail_code" to "REPAIR_FAIL"))
 
@@ -499,7 +500,8 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
         }
         val repaired = File(taskDir, "build/repaired.apk")
         val res = com.yuntuoxiu.app.engine.LocalRepairEngine.rebuild(
-            File(origApk), dexes, repaired, cleanShell = false
+            File(origApk), dexes, repaired, cleanShell = false,
+            runtimeEntry = readRuntimeEntry(dumpDir)
         ) ?: return ActionResponse(false, "本地重组失败", mapOf("fail_code" to "BUILD_FAIL"))
 
         val signed = File(taskDir, "build/signed.apk")
@@ -520,6 +522,30 @@ class ActionExecutor(private val context: Context, private val taskId: String) {
     private fun onUpload(payload: ActionPayload): ActionResponse {
         val dexName = payload.params["dex_name"] as? String
         return ActionResponse(true, "分片已写入", mapOf("dex_name" to dexName))
+    }
+
+    /**
+     * ⭐ v2.4：读取「沙箱运行时真实入口」entry.txt（Layout Inspect 思路）。
+     *   优先在给定 dex 目录找；找不到再在 dump 目录各子目录找。
+     * @return 真实 Application 类名；无则 null
+     */
+    private fun readRuntimeEntry(dexDir: File): String? {
+        return try {
+            val cands = listOf(
+                File(dexDir, "entry.txt"),
+                File(dexDir.parentFile, "entry.txt"),
+            )
+            for (c in cands) {
+                if (c.isFile) {
+                    val t = c.readText().trim()
+                    if (t.isNotBlank()) {
+                        Log.i(TAG, "readRuntimeEntry: 命中 ${c.absolutePath} = $t")
+                        return t
+                    }
+                }
+            }
+            null
+        } catch (_: Throwable) { null }
     }
 }
 

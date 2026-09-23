@@ -141,6 +141,7 @@ object LocalRepairEngine {
         cleanShell: Boolean = false,   // ⭐ v2.2：默认 false（整体壳的 so 是运行必需，删了会装不上）
         repairDex: Boolean = true,
         realApp: String? = null,
+        runtimeEntry: String? = null,   // ⭐ v2.4：沙箱运行时真实入口（最高优先级）
         onProgress: (String) -> Unit = {}
     ): Result? {
         if (!srcApk.isFile) {
@@ -160,10 +161,23 @@ object LocalRepairEngine {
         var totalOut = 0L
 
         try {
+            // ⭐ v2.4：优先采用「沙箱运行时真实入口」（Layout Inspect 思路）。
+            //   调用方（PipelineRunner）从原始 dump 目录读取 entry.txt 后传入；
+            //   若未传入，则尝试从 dexFiles 所在目录读取（两者之一命中即可）。
+            //   这是最可靠的来源 —— 静态 dex 扫描对抽取壳/VMP 壳无效。
+            val runtimeEntryResolved: String? = runtimeEntry?.takeIf { it.isNotBlank() }
+                ?: try {
+                    val ef = File(dexFiles.first().parentFile, "entry.txt")
+                    if (ef.isFile) ef.readText().trim().ifBlank { null } else null
+                } catch (_: Throwable) { null }
+            if (!runtimeEntryResolved.isNullOrBlank()) {
+                onProgress("发现运行时真实入口 = $runtimeEntryResolved")
+            }
+
             // ⭐ v2.2：若未显式提供 realApp，则自动探测真实 Application 入口
             if (realAppResolved.isNullOrBlank()) {
                 onProgress("自动探测真实 Application 入口...")
-                val found = RealEntryFinder.find(dexFiles, null)
+                val found = RealEntryFinder.find(dexFiles, null, runtimeEntry = runtimeEntryResolved)
                 realAppResolved = found.className
                 onProgress("真实入口: ${realAppResolved ?: "未识别"}（来源=${found.source}）")
             }

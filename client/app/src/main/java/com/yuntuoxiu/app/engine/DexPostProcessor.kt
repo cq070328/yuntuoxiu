@@ -52,8 +52,34 @@ object DexPostProcessor {
         "com/yuntuoxiu/app",
         "top/niunaijun/blackbox",
         "com/ai/assistance/operit",
-        "Operit",
+        // ⭐ v2.4：旧 Xposed 脱壳模块（com.ytx.dump）若参与产物，也属宿主侧
+        "com/ytx/dump",
+        "Lcom/ytx/dump",
     )
+
+    /**
+     * ⭐ v2.3：宿主 dex 判定阈值（下调）。
+     *
+     * 背景：v2.2 用 30 次阈值，实测宿主 10.9MB dex 因前 2MB 内宿主串计数不足
+     *   而**漏判** → 宿主 dex 被当作产物上传。
+     *
+     * 调整：
+     *   · 阈值下调到 8（宿主 dex 里 `Lcom/yuntuoxiu/app` 等描述符必然大量出现）
+     *   · 扫描范围从 2MB 扩大到 8MB（覆盖更大 dex 的字符串池）
+     *   · 增加「类描述符」形式（`Lcom/yuntuoxiu/app`）单独判定：命中即宿主
+     */
+    private const val HOST_HIT_THRESHOLD = 8
+
+    /** 宿主 dex 的「强特征」（类描述符形式，命中即判为宿主，无需计数） */
+    private val HOST_STRONG_MARKERS = listOf(
+        "Lcom/yuntuoxiu/app",
+        "Ltop/niunaijun/blackbox",
+        "Lcom/ai/assistance/operit",
+        "Lcom/ytx/dump",
+    )
+
+    /** 单个 dex 的扫描窗口（8MB，覆盖大型 dex 的字符串池） */
+    private const val SCAN_WINDOW = 8 * 1024 * 1024
 
     data class Result(
         val kept: List<File>,          // 保留（已排序）的 dex
@@ -102,10 +128,17 @@ object DexPostProcessor {
                 dropped.add(dex)
                 continue
             }
-            // ⭐ v2.2：丢弃「宿主（云脱修）自己的 dex」
+            // ⭐ v2.3：丢弃「宿主（云脱修）自己的 dex」
             //   内存扫描会把宿主 dex 一起 dump 出来（同进程），必须排除。
-            if (info.hostHit != null) {
-                onProgress("丢弃 ${dex.name}（宿主 dex，命中 ${info.hostHit}）")
+            //   · 强特征（类描述符 Lcom/yuntuoxiu/app 等）命中 1 次即判宿主
+            //   · 否则按出现次数超过阈值（8）判定
+            if (info.hostStrongHit != null) {
+                onProgress("丢弃 ${dex.name}（宿主 dex，强特征 ${info.hostStrongHit}）")
+                dropped.add(dex)
+                continue
+            }
+            if (info.hostHits >= HOST_HIT_THRESHOLD) {
+                onProgress("丢弃 ${dex.name}（宿主 dex，特征命中 ${info.hostHits} 次 ≥ $HOST_HIT_THRESHOLD）")
                 dropped.add(dex)
                 continue
             }
@@ -155,7 +188,8 @@ object DexPostProcessor {
         val file: File,
         val classCount: Int,
         val stubHit: String?,
-        val hostHit: String?,
+        val hostHits: Int,
+        val hostStrongHit: String?,
         val fingerprint: String,
     )
 
@@ -167,18 +201,28 @@ object DexPostProcessor {
             if (magic != "dex\n" && magic != "cdex") return null
 
             val classCount = readU4(data, 0x60)
-            // 扫描前 2MB 找壳特征
-            val scanLen = minOf(data.size, 2 * 1024 * 1024)
+            // ⭐ v2.3：扫描窗口从 2MB 扩大到 8MB（覆盖大型 dex 的字符串池）
+            val scanLen = minOf(data.size, SCAN_WINDOW)
             val text = String(data, 0, scanLen, Charsets.ISO_8859_1)
             val stubHit = STUB_MARKERS.firstOrNull { text.contains(it) }
 
-            // ⭐ v2.2：识别「宿主（云脱修）的 dex」—— 含宿主类名特征
-            val hostHit = HOST_MARKERS.firstOrNull { text.contains(it) }
+            // ⭐ v2.3：强特征（类描述符形式）命中即宿主，无需计数
+            val hostStrongHit = HOST_STRONG_MARKERS.firstOrNull { text.contains(it) }
+
+            // 统计宿主特征串出现次数（用计数而非布尔，避免误杀）
+            var hostHits = 0
+            for (m in HOST_MARKERS) {
+                var idx = text.indexOf(m)
+                while (idx >= 0) {
+                    hostHits++
+                    idx = text.indexOf(m, idx + m.length)
+                }
+            }
 
             // fingerprint：class 数 + 前 4KB 的简单哈希
             val head = data.copyOfRange(0, minOf(data.size, 4096))
             val hash = head.fold(0) { acc, b -> acc * 31 + b }
-            DexInfo(dex, classCount, stubHit, hostHit, "$classCount:$hash")
+            DexInfo(dex, classCount, stubHit, hostHits, hostStrongHit, "$classCount:$hash")
         } catch (t: Throwable) {
             LogStore.w(TAG, "analyze ${dex.name} 失败: ${t.message}")
             null

@@ -540,8 +540,9 @@ static int isLikelyDex(const uint8_t *p, size_t readable) {
     return size;
 }
 
-/** 把一段内存作为 dex dump 出来（含 DexFileLoader 校验） */
-static void dumpDexBuffer(const uint8_t *begin, int size) {
+/** 把一段内存作为 dex dump 出来（含 DexFileLoader 校验）
+ *  v2.4：outDir 显式传入，不再依赖全局 dumpPath（避免与 hookDumpDex 互相污染） */
+static void dumpDexBuffer(const uint8_t *begin, int size, const char *outDir) {
     // 去重（按 size）
     list<int>::iterator iterator;
     for (iterator = dumped.begin(); iterator != dumped.end(); ++iterator) {
@@ -601,42 +602,69 @@ static void dumpDexBuffer(const uint8_t *begin, int size) {
     //   内存扫描会误扫到 → 产物变成云脱修的 dex。
     //   判定：扫描 dump 数据里是否含宿主特征串，有则丢弃。
     {
+        // ⭐⭐ v2.3：扩展宿主/壳特征表 —— 增加带 L...; 前缀的**类描述符**形式，
+        //   比裸包名更精确（正常业务 dex 不会出现 Lcom/yuntuoxiu/app/ 这样的描述符）。
         static const char *HOST_MARKERS[] = {
+            // 宿主（云脱修）—— 类描述符形式（最精确）
+            "Lcom/yuntuoxiu/app",
+            "Ltop/niunaijun/blackbox",
+            "Lcom/ai/assistance/operit",
+            // 宿主 —— 裸包名形式
             "com/yuntuoxiu/app",
             "top/niunaijun/blackbox",
             "com/ai/assistance/operit",
-            "Operit",
+            // 常见壳 stub（避免把壳 dex 当目标）
+            "Lcom/stub/StubApp",
+            "Lcom/tencent/StubShell",
+            "Lcom/secneo/apkwrapper",
+            "Lcom/qihoo/util",
             (const char *) nullptr
         };
-        // 只扫前 4MB（特征串多在 dex 头部/字符串池）
-        size_t scanLen = size < (4 * 1024 * 1024) ? size : (4 * 1024 * 1024);
-        bool isHost = false;
-        const char *hit = nullptr;
+        // ⭐ v2.3：宿主 dex 判定用「命中计数」而非「命中一个就丢」——
+        //   内存扫描可能跨界混入少量宿主串，计数 >= 2 才判为宿主，降低误杀。
+        //   但「类描述符形式」（Lcom/yuntuoxiu/app 等）命中 1 次即可判定。
+        size_t scanLen = size < (8 * 1024 * 1024) ? size : (8 * 1024 * 1024);
+        int hostHitCount = 0;
+        const char *strongHit = nullptr;   // 类描述符强命中
+        const char *weakHit = nullptr;     // 裸包名弱命中
         for (int i = 0; HOST_MARKERS[i] != nullptr; i++) {
             const char *m = HOST_MARKERS[i];
             size_t ml = strlen(m);
             if (ml == 0 || scanLen < ml) continue;
+            bool found = false;
             // 简单子串搜索
             for (size_t p = 0; p + ml <= scanLen; p++) {
-                if (memcmp(buf + p, m, ml) == 0) { isHost = true; hit = m; break; }
+                if (memcmp(buf + p, m, ml) == 0) { found = true; break; }
             }
-            if (isHost) break;
+            if (found) {
+                hostHitCount++;
+                if (m[0] == 'L') {
+                    // 类描述符形式 → 强命中
+                    if (!strongHit) strongHit = m;
+                } else {
+                    if (!weakHit) weakHit = m;
+                }
+            }
         }
+        bool isHost = (strongHit != nullptr) || (hostHitCount >= 2);
         if (isHost) {
-            ALOGE("memScan: 丢弃宿主 dex (size=%d, 命中 %s)", size, hit ? hit : "?");
+            ALOGE("memScan: 丢弃宿主 dex (size=%d, 命中 %s, 计数=%d)",
+                  size, strongHit ? strongHit : (weakHit ? weakHit : "?"), hostHitCount);
             free(buffer);
             return;
         }
     }
 
     char path[1024];
-    sprintf(path, "%s/scan_%d.dex", dumpPath, size);
+    sprintf(path, "%s/scan_%d.dex", outDir, size);
     auto fd = open(path, O_CREAT | O_WRONLY, 0600);
     ssize_t w = write(fd, buffer, size);
     fsync(fd);
     if (w > 0) {
+        // ⭐ v2.4：防越界 —— OpenAll 成功但 dex_files 为空时不访问 [0]
+        size_t ncls = dex_files.empty() ? 0 : dex_files[0]->NumClassDefs();
         ALOGE("memScan dump dex ======> %s (%d bytes, %zu classes)",
-              path, size, dex_files[0]->NumClassDefs());
+              path, size, ncls);
     } else {
         remove(path);
     }
@@ -647,12 +675,16 @@ static void dumpDexBuffer(const uint8_t *begin, int size) {
 
 /** 解析 /proc/self/maps，对所有可读匿名/堆/dalvik 区域做内存扫描 */
 void DexDump::memScanDump(JNIEnv *env, jstring dir) {
-    dumpPath = env->GetStringUTFChars(dir, 0);
-    ALOGE("memScanDump: 开始内存扫描脱壳, dir=%s", dumpPath);
+    // ⭐ v2.4：使用局部目录副本，**不覆盖全局 dumpPath**。
+    //   原因：全局 dumpPath 由 hookDumpDex 设置、handleDumpByDexFile 读取，
+    //   memScanDump 若覆盖并在结束时释放，会让 hook 回调读到已释放内存 → 崩溃。
+    const char *dirC = env->GetStringUTFChars(dir, 0);
+    ALOGE("memScanDump: 开始内存扫描脱壳, dir=%s", dirC);
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (!maps) {
         ALOGE("memScanDump: 打不开 /proc/self/maps");
+        env->ReleaseStringUTFChars(dir, dirC);
         return;
     }
 
@@ -691,8 +723,7 @@ void DexDump::memScanDump(JNIEnv *env, jstring dir) {
                 continue;
             }
         }
-
-        if (totalScanned > MAX_TOTAL_SCAN) {
+if (totalScanned > MAX_TOTAL_SCAN) {
             ALOGE("memScanDump: 已达总扫描上限，停止");
             break;
         }
@@ -709,7 +740,7 @@ void DexDump::memScanDump(JNIEnv *env, jstring dir) {
                 if (sz > 0) {
                     ALOGE("memScan: 命中 dex @ %p size=%d (region %lx-%lx)",
                           p + scanned, sz, start, end);
-                    dumpDexBuffer(p + scanned, sz);
+                    dumpDexBuffer(p + scanned, sz, dirC);
                     hitCount++;
                 }
             }
@@ -719,7 +750,8 @@ void DexDump::memScanDump(JNIEnv *env, jstring dir) {
     fclose(maps);
     ALOGE("memScanDump: 完成，扫描 %d 个区域(%zu bytes)，命中 %d 个 dex",
           regionCount, totalScanned, hitCount);
-    env->ReleaseStringUTFChars(dir, dumpPath);
+    // ⭐ v2.4：释放局部副本（不再触碰全局 dumpPath）
+    env->ReleaseStringUTFChars(dir, dirC);
 }
 
 /**

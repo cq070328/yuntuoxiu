@@ -260,6 +260,17 @@ object LocalUnpackEngine {
             }
             val dexes = collectDex(dumpDir)
             LogStore.i(TAG, "dumpFile: 完成, 产出 ${dexes.size} 个 dex")
+            // ⭐ v2.4：读取沙箱写入的「运行时真实入口」entry.txt（Layout Inspect 思路）
+            try {
+                val ef = File(dumpDir, "entry.txt")
+                if (ef.isFile) {
+                    val rt = ef.readText().trim()
+                    if (rt.isNotBlank()) {
+                        LogStore.i(TAG, "dumpFile: 运行时真实入口 = $rt")
+                        onProgress("运行时真实入口: $rt（将用于替换 Manifest）")
+                    }
+                }
+            } catch (_: Throwable) {}
             // ⭐ v2.1 P0：dump 为空时打印真实引擎目录与目录内容，便于定位（权限/写失败/无产出）
             if (dexes.isEmpty()) {
                 val exists = dumpDir.exists()
@@ -271,6 +282,19 @@ object LocalUnpackEngine {
                 //   而不是只看到“未产出 DEX”。
                 val diag = buildDumpFailureDiagnosis(dumpDir, result.packageName)
                 onProgress("未产出 DEX：$diag")
+            } else {
+                // ⭐⭐⭐ v2.3：产物来源判定 —— 若全是「宿主/壳 dex」，明确提示失败原因，
+                //   避免把「云脱修自己的 dex」当成脱壳成功产物（这是本版本要解决的核心问题）。
+                val cls = classifyDump(dexes)
+                LogStore.i(TAG, "dumpFile: 产物来源判定 = $cls")
+                if (cls.realCount == 0) {
+                    val diag = buildHostOnlyDiagnosis(result.packageName, cls)
+                    onProgress("⚠️ 只拿到宿主/壳 dex，未拿到目标真实 DEX。$diag")
+                    LogStore.e(TAG, "dumpFile: 只拿到宿主/壳 dex！$diag")
+                } else {
+                    onProgress("产物判定: 真实目标 dex=${cls.realCount} 个，"
+                            + "宿主/壳 dex=${cls.hostCount} 个")
+                }
             }
             // ⭐ v2.0：把 BlackBox 日志尾部追加到 App 日志，便于直接查看失败原因
             try {
@@ -342,6 +366,108 @@ object LocalUnpackEngine {
         } catch (t: Throwable) {
             sb.append("\n读取 blackbox.log 失败: ${t.message}")
         }
+        return sb.toString()
+    }
+
+    /**
+     * ⭐ v2.3：产物分类结果。
+     * @param realCount 疑似「目标真实业务 dex」数量（非宿主/壳 且 class 数达标）
+     * @param hostCount 疑似「宿主（云脱修）/壳 dex」数量
+     * @param names     全部产物文件名
+     */
+    data class DumpClassify(
+        val realCount: Int,
+        val hostCount: Int,
+        val names: List<String>,
+    )
+
+    /** 宿主 / 壳 特征串（类描述符形式最精确） */
+    private val HOST_OR_SHELL_MARKERS = listOf(
+        "Lcom/yuntuoxiu/app", "com/yuntuoxiu/app",
+        "Ltop/niunaijun/blackbox", "top/niunaijun/blackbox",
+        "Lcom/ai/assistance/operit", "com/ai/assistance/operit",
+        "Lcom/stub/StubApp", "Lcom/tencent/StubShell",
+        "Lcom/secneo/apkwrapper", "Lcom/qihoo/util",
+    )
+
+    /**
+     * ⭐ v2.3：判定一组 dump 产物中，「真实目标 dex」与「宿主/壳 dex」各有多少。
+     *
+     * 判定规则：
+     *   · 命中宿主/壳特征（≥1 个类描述符，或 ≥2 个裸包名）→ 宿主/壳
+     *   · 否则若 class 数 ≥ 300 → 真实目标 dex
+     *   · 其余（碎片、stub）→ 归为宿主/壳 类（保守：不计入 real）
+     */
+    fun classifyDump(dexes: List<File>): DumpClassify {
+        var real = 0
+        var host = 0
+        for (f in dexes) {
+            if (!f.isFile || f.length() < 112) { host++; continue }
+            val info = scanDex(f)
+            if (info == null) { host++; continue }
+            val (classCount, markerHits, strongHit) = info
+            if (strongHit || markerHits >= 2) host++
+            else if (classCount >= 300) real++
+            else host++   // 小碎片 / stub → 保守归为 host（不计入 real）
+        }
+        return DumpClassify(real, host, dexes.map { it.name })
+    }
+
+    /** 扫描 dex：返回 (class 数, 特征命中数, 是否命中强特征) */
+    private fun scanDex(f: File): Triple<Int, Int, Boolean>? {
+        return try {
+            val bytes = f.readBytes()
+            if (bytes.size < 0x64) return null
+            val classCount = (bytes[0x60].toInt() and 0xFF) or
+                    ((bytes[0x61].toInt() and 0xFF) shl 8) or
+                    ((bytes[0x62].toInt() and 0xFF) shl 16) or
+                    ((bytes[0x63].toInt() and 0xFF) shl 24)
+            val scanLen = minOf(bytes.size, 8 * 1024 * 1024)
+            val text = String(bytes, 0, scanLen, Charsets.ISO_8859_1)
+            var hits = 0
+            var strong = false
+            for (m in HOST_OR_SHELL_MARKERS) {
+                if (text.contains(m)) {
+                    hits++
+                    if (m.startsWith("L")) strong = true
+                }
+            }
+            Triple(classCount, hits, strong)
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * ⭐ v2.3：构造「只拿到宿主/壳 dex」的诊断信息。
+     *
+     * 核心结论：目标真实 dex 未解密（通常原因）：
+     *   · 壳 Application 未构造（目标 ClassLoader 建立失败）
+     *   · 壳反调试 / 签名校验触发 → 拒绝解密
+     */
+    fun buildHostOnlyDiagnosis(pkg: String, cls: DumpClassify): String {
+        val sb = StringBuilder()
+        sb.append("pkg=").append(pkg)
+        sb.append(" real=").append(cls.realCount)
+        sb.append(" host/shell=").append(cls.hostCount)
+        sb.append(" 产物=[").append(cls.names.joinToString(",")).append("]")
+        try {
+            val bbxLog = File("/storage/emulated/0/MT2/apks/unpackcloud/logs/blackbox.log")
+            if (bbxLog.isFile) {
+                val lines = bbxLog.readLines()
+                // 提取与「目标 loader 建立 / 壳解密」相关的行
+                val keys = listOf(
+                    "PathClassLoader", "Writable dex", "loader=",
+                    "方案X", "onCreate", "application 构造完成",
+                    "discard", "丢弃宿主", "壳"
+                )
+                val hits = lines.filter { l -> keys.any { l.contains(it) } }.takeLast(8)
+                if (hits.isNotEmpty()) sb.append("\n关键日志:\n").append(hits.joinToString("\n"))
+            }
+        } catch (_: Throwable) {
+        }
+        sb.append("\n提示：多为壳反调试/签名校验未过，或目标 ClassLoader 未能建立（可检查黑盒日志中的 "
+                + "Writable dex / 方案X 行）。")
         return sb.toString()
     }
 

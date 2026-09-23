@@ -107,6 +107,19 @@ object PipelineRunner {
             onProgress(Progress(3, 7, "本地脱壳", "产出 ${dexes.size} 个 dex", true))
         }
 
+        // ⭐⭐⭐ v2.4【Layout Inspect 思路】：读取沙箱运行时解析的「真实 Application 入口」。
+        //   沙箱（BActivityThread）在构造目标 Application 后，会把真实入口类名写入
+        //   原始 dump 目录的 entry.txt。这里先抓取，避免后续 dump_post/dump_fixed
+        //   （入口不在这些目录）导致丢失。
+        val runtimeEntry: String? = try {
+            val ef = File(dexes.firstOrNull()?.parentFile ?: dexDir, "entry.txt")
+            if (ef.isFile) ef.readText().trim().ifBlank { null } else null
+        } catch (_: Throwable) { null }
+        runtimeEntry?.let {
+            onProgress(Progress(3, 7, "真实入口", "运行时解析到真实 Application: $it", true))
+            LogStore.i(TAG, "[$taskId] runtimeEntry=$it")
+        }
+
         // ③b ⭐ v2.2：DEX 后处理（过滤壳 stub / 去重 / 按 class 数排序 / 命名 classesN）
         var processedDexes: List<File> = emptyList()
         if (dexes.isNotEmpty()) {
@@ -154,7 +167,9 @@ object PipelineRunner {
                     cur, LocalUnpackEngine.collectDex(useDir), out,
                     // ⭐ v2.2：替换 dex 时**保留**壳 so/assets（脱壳阶段需要），
                     //   真正的清壳在下一步 ⑤b 执行
-                    cleanShell = false, repairDex = false
+                    cleanShell = false, repairDex = false,
+                    // ⭐ v2.4：把沙箱运行时解析的真实入口传入 → rebuild 优先采用它替换 Manifest
+                    runtimeEntry = runtimeEntry
                 )
                 if (r != null && out.isFile) {
                     cur = out
