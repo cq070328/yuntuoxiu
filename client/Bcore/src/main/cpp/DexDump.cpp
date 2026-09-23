@@ -596,6 +596,39 @@ static void dumpDexBuffer(const uint8_t *begin, int size) {
         return;
     }
 
+    // ⭐⭐ v2.2：过滤「宿主（云脱修）自己的 dex」——
+    //   实测：:p0 进程内存里也加载了宿主的 10.7MB dex，
+    //   内存扫描会误扫到 → 产物变成云脱修的 dex。
+    //   判定：扫描 dump 数据里是否含宿主特征串，有则丢弃。
+    {
+        static const char *HOST_MARKERS[] = {
+            "com/yuntuoxiu/app",
+            "top/niunaijun/blackbox",
+            "com/ai/assistance/operit",
+            "Operit",
+            (const char *) nullptr
+        };
+        // 只扫前 4MB（特征串多在 dex 头部/字符串池）
+        size_t scanLen = size < (4 * 1024 * 1024) ? size : (4 * 1024 * 1024);
+        bool isHost = false;
+        const char *hit = nullptr;
+        for (int i = 0; HOST_MARKERS[i] != nullptr; i++) {
+            const char *m = HOST_MARKERS[i];
+            size_t ml = strlen(m);
+            if (ml == 0 || scanLen < ml) continue;
+            // 简单子串搜索
+            for (size_t p = 0; p + ml <= scanLen; p++) {
+                if (memcmp(buf + p, m, ml) == 0) { isHost = true; hit = m; break; }
+            }
+            if (isHost) break;
+        }
+        if (isHost) {
+            ALOGE("memScan: 丢弃宿主 dex (size=%d, 命中 %s)", size, hit ? hit : "?");
+            free(buffer);
+            return;
+        }
+    }
+
     char path[1024];
     sprintf(path, "%s/scan_%d.dex", dumpPath, size);
     auto fd = open(path, O_CREAT | O_WRONLY, 0600);
