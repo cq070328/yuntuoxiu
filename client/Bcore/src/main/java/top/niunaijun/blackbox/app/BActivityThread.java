@@ -161,6 +161,14 @@ public class BActivityThread extends IBActivityThread.Stub {
             dirFile = new File(dirFile, subDir);
         }
         result.dir = dirFile.getAbsolutePath();
+        // ⭐ v2.2：主动创建 dump 目录（原代码只在 VMCore 循环内 mkdirs，
+        //   cookie 为空时循环不执行 → 目录不存在 → 上层永远数不到 dex）
+        try {
+            if (!dirFile.exists()) {
+                dirFile.mkdirs();
+            }
+        } catch (Throwable ignored) {
+        }
         BlackBoxCore.bbxLog("handleBindApplication: dump 目标目录=" + result.dir
                 + " exists=" + dirFile.exists() + " canWrite=" + dirFile.canWrite());
         try {
@@ -279,12 +287,20 @@ public class BActivityThread extends IBActivityThread.Stub {
             //   正确语义：只要该进程属于目标包，就应执行 dump。
             //   （packageName 为包名；processName 可能是 "pkg" 或 "pkg:xxx"）
             if (isTargetProcess(packageName, processName)) {
-                ClassLoader loader;
-                if (application == null) {
-                    loader = LoadedApk.getClassloader.call(loadedApk);
-                } else {
-                    //走到这里已经寄了，牛奶哥说可以挣扎一下，（`_`）
+                // ⭐ v2.2 关键修复：loader 解析优先级。
+                //   实测（A16）：`application` 常为 null，且 `LoadedApk.getClassloader.call(loadedApk)`
+                //   在 A16 返回 null → loader=null → VMCore.cookieDumpDex(null,...) 取不到
+                //   任何 cookie → 0 个 dex。
+                //   而 loadedApkClassLoader 在第 223 行已通过反射成功取得，是**最可靠**的来源。
+                ClassLoader loader = loadedApkClassLoader;
+                if (loader == null && application != null) {
                     loader = application.getClassLoader();
+                }
+                if (loader == null) {
+                    loader = LoadedApk.getClassloader.call(loadedApk);
+                }
+                if (loader == null) {
+                    loader = BlackBoxCore.getContext().getClassLoader();
                 }
                 BlackBoxCore.bbxLog("handleBindApplication: 进入 handleDumpDex, loader=" + loader);
                 sDumping = true;

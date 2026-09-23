@@ -62,6 +62,12 @@ public class VMCore {
         File baseFile = new File(BlackBoxCore.get().getDexDumpDir(), packageName);
         String subDir = BlackBoxCore.get().getDumpSubDir();
         File file = (subDir != null && !subDir.isEmpty()) ? new File(baseFile, subDir) : baseFile;
+        // ⭐ v2.2：目录先建好（原先只在循环内 mkdirs，cookies 为空则不建）
+        FileUtils.mkdirs(file);
+        BlackBoxCore.bbxLog("VMCore.cookieDumpDex: pkg=" + packageName
+                + " cookies=" + (cookies == null ? "null" : cookies.size())
+                + " dir=" + file.getAbsolutePath()
+                + " exists=" + file.exists() + " canWrite=" + file.canWrite());
 
         DumpResult result = new DumpResult();
         result.dir = file.getAbsolutePath();
