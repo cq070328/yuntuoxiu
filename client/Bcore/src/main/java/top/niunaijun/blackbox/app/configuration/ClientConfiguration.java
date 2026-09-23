@@ -33,8 +33,11 @@ public abstract class ClientConfiguration {
     }
 
     public boolean isEnableHookDump() {
-        // ⭐ v2.2：默认关闭（Android 16 上 native hookDumpDex → Dobby 解析 SIGSEGV）
-        return false;
+        // ⭐ v2.2：恢复 true。实际是否走 native hookDump 由「深度脱壳」开关
+        //   （BlackDexCore.isDeepUnpack）在 AppInstrumentation 中二次门控：
+        //   标准模式 deep=false → 不走 hookDump（避开 A16 Dobby 崩溃）
+        //   深度模式 deep=true  → 走 hookDump（尝试 dump CodeItem）
+        return true;
     }
 
     public boolean isAutoCallMethod(){return false;}

@@ -178,50 +178,68 @@ object ShellDetect {
 
                 // 2b) ⭐ v2.0：扩展特征库（47 厂商，全维度：so + assets + lib）
                 //     命中任一 → 判定该厂商（权重 0.85）
+                //
+                // ⭐ v2.2 修复：不再「取第一个命中的厂商」，而是**按特征强度打分**。
+                //   原因：启明星辰(列表靠前)的宽泛规则会先命中，导致「爱作业(腾讯御安全)」
+                //   被误判。现改为：so 命中权重 > assets 命中，取最高分厂商。
                 val matchedVendors = ArrayList<String>()
+                var bestVendorName: String? = null
+                var bestVendorWeight = -1.0
+
                 for (v in ShellSignatures.VENDORS) {
                     var hitName: String? = null
+                    var hitKind = ""           // so / lib / asset
+                    var weight = 0.0
 
-                    // 2b-1: so 名（lib/<abi>/xxx.so）
+                    // 2b-1: so 名（lib/<abi>/xxx.so）—— 最强特征
                     for (so in v.soNames) {
                         if (entries.any {
                                 val n = it.substringAfterLast('/')
                                 n.equals(so, ignoreCase = true)
                             }) {
-                            hitName = so; break
+                            hitName = so; hitKind = "so"; weight = 0.95; break
                         }
                     }
-                    // 2b-2: lib 目录名（含 .a / .so）
+                    // 2b-2: lib 目录名（含 .a / .so）—— 强特征
                     if (hitName == null) {
                         for (ln in v.libNames) {
                             if (entries.any {
                                     val n = it.substringAfterLast('/')
                                     n.equals(ln, ignoreCase = true)
                                 }) {
-                                hitName = ln; break
+                                hitName = ln; hitKind = "lib"; weight = 0.90; break
                             }
                         }
                     }
-                    // 2b-3: assets 名
+                    // 2b-3: assets 名 —— 中等特征（较易误报）
                     if (hitName == null) {
                         for (a in v.assetNames) {
+                            // ⭐ v2.2：跳过「classesN.dex」这类通用文件（非特征）
+                            if (Regex("^classes\\d*\\.dex$").matches(a)) continue
                             if (entries.any {
                                     val n = it.substringAfterLast('/')
                                     n.equals(a, ignoreCase = true) ||
                                             it.equals("assets/$a", true)
                                 }) {
-                                hitName = a; break
+                                hitName = a; hitKind = "asset"; weight = 0.75; break
                             }
                         }
                     }
                     if (hitName != null) {
-                        matchedVendors.add("${v.vendor}($hitName)")
-                        if (matchedVendorNameOuter == null) matchedVendorNameOuter = v.vendor
-                        bump(v.tag, 0.85, "${v.vendor} 特征: $hitName")
+                        matchedVendors.add("${v.vendor}($hitKind:$hitName)")
+                        bump(v.tag, weight, "${v.vendor} 特征($hitKind): $hitName")
+                        // ⭐ 取权重最高者作为真实厂商
+                        if (weight > bestVendorWeight) {
+                            bestVendorWeight = weight
+                            bestVendorName = v.vendor
+                        }
                     }
                 }
+                // 记录最高分厂商（供最终 vendor 名使用）
+                matchedVendorNameOuter = bestVendorName
                 if (matchedVendors.isNotEmpty()) {
                     reasons.add("命中厂商: " + matchedVendors.joinToString(", "))
+                    reasons.add("主厂商(最高分): $bestVendorName (weight=$bestVendorWeight)")
                 }
 
                 // 2c) ⭐ v2.0：厂商策略表的模糊匹配（so 名前缀/子串）

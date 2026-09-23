@@ -43,6 +43,23 @@ object LocalUnpackEngine {
     @Volatile
     private var runningStartMs = 0L
 
+    /**
+     * ⭐ v2.2：深度脱壳开关（真实原 dex）。
+     *
+     * false（默认）：只做 cookie dump（快，但 VMP/抽取壳拿不到真实方法体）
+     * true：额外开启 fixCodeItem + Hook dump，dump ART 已加载 CodeItem，
+     *       还原真实方法体（慢，对 VMP/抽取壳更有效）
+     */
+    @Volatile
+    private var deepUnpack = false
+
+    fun setDeepUnpack(v: Boolean) {
+        deepUnpack = v
+        LogStore.i(TAG, "setDeepUnpack: $v")
+    }
+
+    fun isDeepUnpack(): Boolean = deepUnpack
+
     private fun runningSince(): String =
         if (runningStartMs <= 0) "?" else java.text.SimpleDateFormat(
             "HH:mm:ss", java.util.Locale.US).format(java.util.Date(runningStartMs))
@@ -194,8 +211,18 @@ object LocalUnpackEngine {
         runningStartMs = System.currentTimeMillis()
         try {
             onProgress("启动本地脱壳引擎(文件): ${apkFile.name}")
-            LogStore.i(TAG, "dumpFile: 开始, apk=${apkFile.absolutePath} size=${apkFile.length()}")
+            LogStore.i(TAG, "dumpFile: 开始, apk=${apkFile.absolutePath} size=${apkFile.length()} deep=$deepUnpack")
             val core = top.niunaijun.blackbox.BlackDexCore.get()
+
+            // ⭐ v2.2：按「深度脱壳」开关动态配置引擎
+            //   · deep=true  → fixCodeItem=true（dump CodeItem 真实方法体）+ hook 兜底
+            //   · deep=false → 仅 cookie dump（快）
+            try {
+                core.setDumpOptions(deepUnpack)
+                onProgress("脱壳模式: " + (if (deepUnpack) "深度（CodeItem dump）" else "标准（cookie dump）"))
+            } catch (t: Throwable) {
+                LogStore.w(TAG, "setDumpOptions 失败: ${t.message}")
+            }
 
             LogStore.i(TAG, "dumpFile: 调用 dumpDex...")
             val result = core.dumpDex(apkFile)

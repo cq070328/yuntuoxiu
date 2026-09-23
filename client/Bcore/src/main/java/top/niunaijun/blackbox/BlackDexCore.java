@@ -26,6 +26,60 @@ public class BlackDexCore {
 
     private static final BlackDexCore sBlackDexCore = new BlackDexCore();
 
+    /**
+     * ⭐ v2.2：深度脱壳开关。
+     *   true  → `ClientConfiguration.isFixCodeItem()` 返回 true，
+     *           native 在 cookie dump 时额外修复/导出 CodeItem（真实方法体）
+     *   false → 仅 cookie dump
+     *
+     * ⚠️ 跨进程：脱壳实际发生在 `:p0` 子进程，静态变量不共享。
+     *   因此把状态**写入标记文件**，isDeepUnpack() 读文件（两个进程都能读到）。
+     */
+    private static volatile boolean sDeepUnpack = false;
+
+    /** 深度脱壳标记文件（跨进程共享） */
+    private static java.io.File deepFlagFile() {
+        try {
+            android.content.Context ctx = BlackBoxCore.getContext();
+            if (ctx != null) {
+                return new java.io.File(ctx.getFilesDir(), "dexdump/.deep_unpack");
+            }
+        } catch (Throwable ignored) {
+        }
+        return new java.io.File("/data/local/tmp/ytx_deep_unpack");
+    }
+
+    public void setDumpOptions(boolean deepUnpack) {
+        sDeepUnpack = deepUnpack;
+        // 写标记文件供 :p0 子进程读取
+        try {
+            java.io.File f = deepFlagFile();
+            f.getParentFile().mkdirs();
+            java.io.FileWriter w = new java.io.FileWriter(f, false);
+            w.write(deepUnpack ? "1" : "0");
+            w.close();
+        } catch (Throwable t) {
+            BlackBoxCore.bbxLog("setDumpOptions: 写标记失败 " + t.getMessage());
+        }
+        BlackBoxCore.bbxLog("BlackDexCore.setDumpOptions: deepUnpack=" + deepUnpack);
+    }
+
+    public static boolean isDeepUnpack() {
+        // 优先：进程内静态值
+        if (sDeepUnpack) return true;
+        // 跨进程：读标记文件
+        try {
+            java.io.File f = deepFlagFile();
+            if (f.isFile()) {
+                String s = new java.io.BufferedReader(new java.io.FileReader(f))
+                        .readLine();
+                return s != null && s.trim().equals("1");
+            }
+        } catch (Throwable ignored) {
+        }
+        return sDeepUnpack;
+    }
+
     public static BlackDexCore get() {
         return sBlackDexCore;
     }

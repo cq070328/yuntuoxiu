@@ -351,7 +351,12 @@ public class BlackBoxCore extends ClientConfiguration {
 
     @Override
     public boolean isFixCodeItem() {
-        return mClientConfiguration.isFixCodeItem();
+        // ⭐ v2.2：由深度脱壳开关动态决定（deep=true → dump CodeItem 真实方法体）
+        try {
+            return BlackDexCore.isDeepUnpack();
+        } catch (Throwable ignored) {
+            return mClientConfiguration != null && mClientConfiguration.isFixCodeItem();
+        }
     }
     @Override
     public boolean isAutoCallMethod(){

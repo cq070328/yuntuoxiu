@@ -40,7 +40,10 @@ object ShellSignatures {
         VendorSig("中国移动加固", "VMP", listOf("decrypt.so", "libcmvmp.so", "libmogosec_dex.so", "libmogosecurity.so", "mogosec_datamogosec_dexinfomogosec_marchmogosec_classesibmogosecurity.so"), listOf("decrypt.so", "libcmvmp.so", "libmogosec_dex.so", "libmogosec_so", "libmogosecurity.so", "mogosec_classes", "mogosec_datamogosec_dexinfomogosec_marchmogosec_classesibmogosecurity.so"), listOf()),
         VendorSig("云镜加固", "OVERALL_SHELL", listOf("libyj-v3-pt.so"), listOf(), listOf("libyj-v3-pt.so")),
         VendorSig("几维安全", "OVERALL_SHELL", listOf("libKwProtectSDK.so", "libkwsdataenc.so"), listOf("ec_dt.lic"), listOf("libKwProtectSDK.so", "libkwsdataenc.so")),
-        VendorSig("启明星辰", "OVERALL_SHELL", listOf("libsqlen_venus-x86.so", "libsqlen_venus.so", "libsqlen_venus64.so", "libvenSec-x86.so", "libvenSec.so", "libvenSec64.so", "libvenustech-x86.so", "libvenustech.so", "libvenustech64.so"), listOf("classes10.dex", "classes11.dex", "classes12.dex", "classes13.dex", "classes14.dex", "classes15.dex", "classes16.dex", "classes2.dex", "classes3.dex", "classes4.dex", "classes5.dex", "classes6.dex", "classes7.dex", "classes8.dex"), listOf()),
+        // ⭐ v2.2 修复：移除启明星辰把 classesN.dex 当资产特征的误报
+        //   （classes2.dex~classes16.dex 是任何多 dex APK 都有的普通文件，
+        //    不是启明星辰特征 —— 原配置导致「爱作业(腾讯御安全)」被误判为启明星辰）
+        VendorSig("启明星辰", "OVERALL_SHELL", listOf("libsqlen_venus-x86.so", "libsqlen_venus.so", "libsqlen_venus64.so", "libvenSec-x86.so", "libvenSec.so", "libvenSec64.so", "libvenustech-x86.so", "libvenustech.so", "libvenustech64.so"), listOf("venCache.dat", "sqlen_venus.dat"), listOf()),
         VendorSig("娜迦加固", "OVERALL_SHELL", listOf("libxloader.so"), listOf("0ba781d5-0f1a-44a8-8955-65fda370b29c.txt"), listOf("libxloader.so")),
         VendorSig("娜迦加固企业版", "OVERALL_SHELL", listOf("libxloader.so"), listOf("abf8d729-efda-4cc2-b0c3-995a58675b7f.txt"), listOf("libxloader.so")),
         VendorSig("支付宝加固", "OVERALL_SHELL", listOf("libashield.so", "libashieldAdapter.so"), listOf(), listOf("libashield.so", "libashieldAdapter.so")),
@@ -60,7 +63,14 @@ object ShellSignatures {
         VendorSig("网易易盾", "OVERALL_SHELL", listOf("libnesec-x86.so", "libnesec.so"), listOf("nedata.db"), listOf("libnesec-x86.so", "libnesec.so")),
         VendorSig("网秦加固", "OVERALL_SHELL", listOf("libnqshield.so"), listOf(), listOf("libnqshield.so")),
         VendorSig("腾讯加固", "OVERALL_SHELL", listOf("libshell-super.2019.so", "libshellx-super.2019.so"), listOf("0OO00l111l1l", "libshellx-super.2019.so", "o0oooOO0ooOo.dat", "tosversion"), listOf("libshell-super.2019.so")),
-        VendorSig("腾讯御安全", "SECSHELL", listOf("libshell-super+包名.so", "libshella-4.6.2.2.so"), listOf("o0oooOO0ooOo.dat", "t86", "t86_64", "tosversion"), listOf("libshell-super+包名.so", "libshella-4.6.2.2.so")),
+        // ⭐ v2.2 修复：腾讯御安全的真实 so 特征名。
+        //   原配置写死了「libshell-super+包名.so」「libshella-4.6.2.2.so」占位符，
+        //   永远匹配不到真实文件（实际名如 libshell-super.<pkg>.so / libshella-4.6.2.2.so）。
+        //   这里给出**真实可能出现的完整名**；通配匹配由 ShellDetect 的 SO_SIG 正则兜底。
+        VendorSig("腾讯御安全", "SECSHELL",
+            listOf("libshell-super.so", "libshellsuper.so", "libshella-4.6.2.2.so", "libshell-super.2019.so"),
+            listOf("o0oooOO0ooOo.dat", "t86", "t86_64", "tosversion", "0OO00l111l1l"),
+            listOf("libshell-super.so", "libshellsuper.so")),
         VendorSig("腾讯御安全企业", "SECSHELL", listOf("libshell-superv.2019.so", "libshell-supervbasic.2019.so"), listOf("0OO00oo01l1l", "0OO00oo11l1l", "dexMethod_00oo1l1l.dat"), listOf("libshell-superv.2019.so", "libshell-supervbasic.2019.so")),
         VendorSig("落叶加固", "OVERALL_SHELL", listOf("libdpt.so"), listOf("OoooooOooo", "app_acf", "app_name", "libdpt.so"), listOf()),
         VendorSig("蛮犀加固", "OVERALL_SHELL", listOf("libmxldd.so"), listOf(), listOf("libmxldd.so")),

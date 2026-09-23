@@ -24,6 +24,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -196,10 +197,53 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // ⭐ v2.2：侧滑设置栏（☰ 按钮 + 深度脱壳开关 + 正则开关）
+        setupDrawer()
+
         // ⚡ v2.0：权限请求延迟到「界面完全显示后」弹起（onWindowFocusChanged 首帧）
         //    （不在 onCreate 里弹，避免阻塞白屏）
         startAutoRefresh()
         LogStore.i(TAG, "MainActivity.onCreate 完成")
+    }
+
+    /** ⭐ v2.2：初始化侧滑设置栏 */
+    private fun setupDrawer() {
+        try {
+            val drawer = findViewById<DrawerLayout>(R.id.drawerLayout)
+
+            // ☰ 按钮 → 打开侧栏
+            findViewById<View>(R.id.btnMenu)?.setOnClickListener {
+                drawer.openDrawer(androidx.core.view.GravityCompat.START)
+            }
+
+            // 深度脱壳开关
+            val swDeep = findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.swDeepUnpack)
+            swDeep?.isChecked = com.yuntuoxiu.app.data.AppSettings.isDeepUnpack(this)
+            swDeep?.setOnCheckedChangeListener { _, checked ->
+                com.yuntuoxiu.app.data.AppSettings.setDeepUnpack(this, checked)
+                // 同步到引擎（下次脱壳生效）
+                com.yuntuoxiu.app.engine.LocalUnpackEngine.setDeepUnpack(checked)
+                Toast.makeText(this,
+                    if (checked) "深度脱壳：已开启（下次脱壳生效）" else "深度脱壳：已关闭",
+                    Toast.LENGTH_SHORT).show()
+                LogStore.i(TAG, "深度脱壳开关: $checked")
+            }
+            // 启动时同步一次引擎状态
+            com.yuntuoxiu.app.engine.LocalUnpackEngine
+                .setDeepUnpack(com.yuntuoxiu.app.data.AppSettings.isDeepUnpack(this))
+
+            // 正则步骤开关
+            val swRegex = findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.swUseRegex)
+            swRegex?.isChecked = com.yuntuoxiu.app.data.AppSettings.isUseRegex(this)
+            swRegex?.setOnCheckedChangeListener { _, checked ->
+                com.yuntuoxiu.app.data.AppSettings.setUseRegex(this, checked)
+                Toast.makeText(this,
+                    if (checked) "正则步骤：已开启" else "正则步骤：已关闭",
+                    Toast.LENGTH_SHORT).show()
+            }
+        } catch (t: Throwable) {
+            LogStore.w(TAG, "setupDrawer 失败: ${t.message}")
+        }
     }
 
     /** 是否已请求过权限（只弹一次） */
@@ -441,21 +485,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // ⭐ v2.2：正则类步骤（规则修补 / 去签名校验）可选 —— 先询问用户
-        showConfirmDialog(
-            "一键脱修 · 步骤选项",
-            "是否启用「正则类步骤」？\n\n" +
-                    "• 启用：额外执行「规则修补（Manifest/反调试串/壳串正则替换）」\n" +
-                    "  与「去除签名校验（SRPatch 注入）」\n" +
-                    "• 不启用：只跑 去壳清理 → 脱壳 → DEX后处理 → 修复 → 替换 → 签名\n\n" +
-                    "提示：若目标是 SecShell 等抽取壳，且无自定义正则规则，\n" +
-                    "       可不启用正则（更快、更稳）。",
-            "启用正则",
-            danger = false,
-            onCancel = { doRunPipeline(task, useRegex = false) }
-        ) {
-            doRunPipeline(task, useRegex = true)
-        }
+        // ⭐ v2.2：正则步骤由「设置」里的开关决定（不再每次弹窗询问）
+        val useRegex = com.yuntuoxiu.app.data.AppSettings.isUseRegex(this)
+        doRunPipeline(task, useRegex = useRegex)
     }
 
     /** ⭐ v2.2：实际执行一键流水线（调 PipelineRunner） */

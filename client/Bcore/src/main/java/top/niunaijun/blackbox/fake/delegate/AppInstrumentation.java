@@ -104,7 +104,15 @@ public final class AppInstrumentation extends BaseInstrumentationDelegate implem
 //            super.newApplication(cl,className,context);
 //        }
         ContextCompat.fix(context);
-        if (BlackBoxCore.get().isEnableHookDump()) {
+        // ⭐ v2.2：仅当「深度脱壳」开启时才走 native hookDump。
+        //   原因：A16 上 DexDump::hookDumpDex → Dobby 解析会 SIGSEGV（实测），
+        //   标准模式必须关闭；深度模式用户显式选择后才尝试（可能崩，但需要 CodeItem）。
+        boolean deep = false;
+        try {
+            deep = top.niunaijun.blackbox.BlackDexCore.isDeepUnpack();
+        } catch (Throwable ignored) {
+        }
+        if (deep && BlackBoxCore.get().isEnableHookDump()) {
             File hookDir = new File(BlackBoxCore.get().getDexDumpDir(), context.getPackageName());
             String subDir = BlackBoxCore.get().getDumpSubDir();
             if (subDir != null && !subDir.isEmpty()) {

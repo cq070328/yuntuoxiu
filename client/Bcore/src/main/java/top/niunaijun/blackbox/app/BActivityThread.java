@@ -232,6 +232,42 @@ public class BActivityThread extends IBActivityThread.Stub {
             }catch (Exception e){
                 Log.e(TAG, "handleBindApplication: ", e);
             }
+
+            // ⭐⭐ v2.2 关键修复：确保 ClassLoader 指向【目标 App】而非宿主。
+            //
+            //   实测问题：`loadedApkClassLoader` 取到的是 **宿主（云脱修）自己的**
+            //   PathClassLoader（其 DexPathList 指向 com.yuntuoxiu.app/base.apk），
+            //   导致 dump 出的是「云脱修 App 自己的 23 个 dex」，与目标 App 完全无关！
+            //
+            //   修复：用沙箱安装的目标 APK（virtual/data/app/<pkg>/base.apk）主动构造
+            //   DexClassLoader → 这才是目标 App 的真实 dex 集合。
+            ClassLoader targetLoader = null;
+            try {
+                File targetApk = BEnvironment.getBaseApkDir(packageName);   // virtual/data/app/<pkg>/base.apk
+                if (targetApk.isFile && targetApk.length() > 0) {
+                    File appDataDir = BEnvironment.getDataDir(packageName, BActivityThread.getUserId());
+                    File appLibDir = BEnvironment.getAppLibDir(packageName);
+                    appDataDir.mkdirs();
+                    appLibDir.mkdirs();
+                    targetLoader = new dalvik.system.DexClassLoader(
+                            targetApk.getAbsolutePath(),
+                            appDataDir.getAbsolutePath(),
+                            appLibDir.getAbsolutePath(),
+                            ClassLoader.getSystemClassLoader()      // parent = boot
+                    );
+                    BlackBoxCore.bbxLog("handleBindApplication: 已构造目标 ClassLoader（目标 APK="
+                            + targetApk.getAbsolutePath() + " size=" + targetApk.length() + "）");
+                } else {
+                    BlackBoxCore.bbxLog("handleBindApplication: 目标 APK 不存在 " + targetApk.getAbsolutePath());
+                }
+            } catch (Throwable t) {
+                BlackBoxCore.bbxLog("handleBindApplication: 构造目标 ClassLoader 失败: "
+                        + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+            // 目标 loader 优先；仅当构造失败时才回退宿主 loader
+            if (targetLoader != null) {
+                loadedApkClassLoader = targetLoader;
+            }
             BlackBoxCore.get().getAppLifecycleCallback().beforeCreateApplication(packageName, processName, packageContext, loadedApk);
             if (Build.VERSION.SDK_INT>=34) {
                 if (!BEnvironment.EMPTY_JAR.setWritable(false)){
