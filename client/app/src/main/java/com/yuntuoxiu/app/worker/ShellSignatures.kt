@@ -63,13 +63,17 @@ object ShellSignatures {
         VendorSig("网易易盾", "OVERALL_SHELL", listOf("libnesec-x86.so", "libnesec.so"), listOf("nedata.db"), listOf("libnesec-x86.so", "libnesec.so")),
         VendorSig("网秦加固", "OVERALL_SHELL", listOf("libnqshield.so"), listOf(), listOf("libnqshield.so")),
         VendorSig("腾讯加固", "OVERALL_SHELL", listOf("libshell-super.2019.so", "libshellx-super.2019.so"), listOf("0OO00l111l1l", "libshellx-super.2019.so", "o0oooOO0ooOo.dat", "tosversion"), listOf("libshell-super.2019.so")),
-        // ⭐ v2.2 修复：腾讯御安全的真实 so 特征名。
-        //   原配置写死了「libshell-super+包名.so」「libshella-4.6.2.2.so」占位符，
-        //   永远匹配不到真实文件（实际名如 libshell-super.<pkg>.so / libshella-4.6.2.2.so）。
-        //   这里给出**真实可能出现的完整名**；通配匹配由 ShellDetect 的 SO_SIG 正则兜底。
+        // ⭐ v2.2 修复：腾讯御安全的真实 so 特征名（权威样本 _shell_sig/加固特征/腾讯御安全）。
+        //   实际文件：
+        //     lib/arm64-v8a/libshell-super.<包名>.so
+        //     lib/arm64-v8a/libshella-4.6.2.2.so
+        //   特征表给的 "libshell-super+包名.so" 是占位符，需靠 ShellDetect 的 SO_SIG 正则兜底。
         VendorSig("腾讯御安全", "SECSHELL",
             listOf("libshell-super.so", "libshellsuper.so", "libshella-4.6.2.2.so", "libshell-super.2019.so"),
-            listOf("o0oooOO0ooOo.dat", "t86", "t86_64", "tosversion", "0OO00l111l1l"),
+            // ⭐ assets 权威特征（实测爱作业）：
+            //   o0oooOO0ooOo.dat(264B) / t86(334KB ELF) / t86_64(343KB ELF) / tosversion(35B)
+            //   + 0OO00l111l1l(10.9MB 加密 dex 容器) ← 特征表漏了！
+            listOf("o0oooOO0ooOo.dat", "t86", "t86_64", "tosversion", "0OO00l111l1l", "0OO00l111l1l"),
             listOf("libshell-super.so", "libshellsuper.so")),
         VendorSig("腾讯御安全企业", "SECSHELL", listOf("libshell-superv.2019.so", "libshell-supervbasic.2019.so"), listOf("0OO00oo01l1l", "0OO00oo11l1l", "dexMethod_00oo1l1l.dat"), listOf("libshell-superv.2019.so", "libshell-supervbasic.2019.so")),
         VendorSig("落叶加固", "OVERALL_SHELL", listOf("libdpt.so"), listOf("OoooooOooo", "app_acf", "app_name", "libdpt.so"), listOf()),

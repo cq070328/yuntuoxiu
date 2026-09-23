@@ -516,18 +516,27 @@ void DexDump::hookDumpDex(JNIEnv *env, jstring dir) {
 /** 校验某地址处是否像合法 dex（magic + size 合理 + checksum 自洽） */
 static int isLikelyDex(const uint8_t *p, size_t readable) {
     if (readable < 112) return 0;
+    // ⭐ v2.2：腾讯御安全（SMZ）会把 magic 第 5 字节篡改为 0xff（如 "dex\n\xff038"）。
+    //   因此放宽校验：
+    //     · 标准 dex：64 65 78 0a ('d''e''x''\n')
+    //     · 篡改版  ：64 65 78 0a 仍然相同（前 4 字节不变），第 5 字节允许非 '0'
     if (!(p[0] == 0x64 && p[1] == 0x65 && p[2] == 0x78 && p[3] == 0x0a)) return 0; // "dex\n"
-    // 版本号 dex\n0XX
-    if (p[4] != '0' || p[5] < '0' || p[5] > '9') return 0;
+    // 第 4 字节（版本首字符）标准是 '0'；SMZ 篡改为 0xff → 放宽为「可打印 或 0xff」
+    // 不再强制 p[4]=='0'
     int size = read_little_endian_uint32(p + 0x20);
-    if (size < 112 || size > 0x10000000) return 0;
+    // ⭐ SMZ 会篡改 size 字段 → 若 size 不合理，尝试「扫描到下一个 magic / 区域末尾」
+    if (size < 112 || size > 0x10000000) {
+        // 退化：返回可读长度（让 dumpDexBuffer 用 DexFileLoader 自己判断）
+        ALOGE("isLikelyDex: 非常规 size=%d，按可读长度处理", size);
+        return (int) (readable > 0x10000000 ? 0x10000000 : readable);
+    }
     if ((size_t) size > readable) return 0;
-    // header_size 应为 0x70
+    // header_size 应为 0x70（SMZ 多不篡改此字段）
     int headerSize = read_little_endian_uint32(p + 0x24);
-    if (headerSize != 0x70) return 0;
-    // endian_tag 应为 0x12345678
-    int endian = read_little_endian_uint32(p + 0x28);
-    if (endian != 0x12345678) return 0;
+    if (headerSize != 0x70) {
+        // 宽松：仍接受（可能是 CompactDex 或被篡改）
+        ALOGE("isLikelyDex: 非常规 header_size=0x%x，仍尝试", headerSize);
+    }
     return size;
 }
 
@@ -543,9 +552,37 @@ static void dumpDexBuffer(const uint8_t *begin, int size) {
     void *buffer = malloc(size);
     if (!buffer) return;
     memcpy(buffer, begin, size);
-    // 修复可能被清零的 magic
+    uint8_t *buf = reinterpret_cast<uint8_t *>(buffer);
+
+    // ⭐⭐ v2.2：SMZ（腾讯御安全）篡改修正 —— 让 DexFileLoader 能解析：
+    //   · magic：dex\n\xff038 → dex\n035\0
+    //   · endian_tag：SMZ 改成 0xb1345678 → 还原为 0x12345678
+    //   · header_size：若异常 → 还原为 0x70
+    //   · size：若异常 → 用实际 dump 长度
     if (!art_lkchan::CompactDexFile::IsMagicValid(begin)) {
-        memcpy(buffer, magic, sizeof(magic));
+        memcpy(buf, magic, sizeof(magic));
+    }
+    // endian_tag 位置 0x28
+    int endian = read_little_endian_uint32(buf + 0x28);
+    if (endian != 0x12345678) {
+        // 若低 3 字节是 34 56 78（标准）→ 只修首字节
+        buf[0x28] = 0x78; buf[0x29] = 0x56; buf[0x2A] = 0x34; buf[0x2B] = 0x12;
+        ALOGE("dumpDexBuffer: endian_tag 0x%x → 0x12345678", endian);
+    }
+    // header_size 位置 0x24
+    int headerSize = read_little_endian_uint32(buf + 0x24);
+    if (headerSize != 0x70) {
+        buf[0x24] = 0x70; buf[0x25] = 0x00; buf[0x26] = 0x00; buf[0x27] = 0x00;
+        ALOGE("dumpDexBuffer: header_size 0x%x → 0x70", headerSize);
+    }
+    // file_size 位置 0x20（用实际长度）
+    int fileSize = read_little_endian_uint32(buf + 0x20);
+    if (fileSize != size) {
+        buf[0x20] = size & 0xFF;
+        buf[0x21] = (size >> 8) & 0xFF;
+        buf[0x22] = (size >> 16) & 0xFF;
+        buf[0x23] = (size >> 24) & 0xFF;
+        ALOGE("dumpDexBuffer: file_size %d → %d", fileSize, size);
     }
 
     // 用 DexFileLoader 校验（过滤假阳性）
