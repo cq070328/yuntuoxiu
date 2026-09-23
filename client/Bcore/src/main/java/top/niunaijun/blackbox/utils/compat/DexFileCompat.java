@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import dalvik.system.DexFile;
+import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.utils.Reflector;
 
 /**
