@@ -233,6 +233,33 @@ public class BActivityThread extends IBActivityThread.Stub {
                 Log.e(TAG, "handleBindApplication: ", e);
             }
 
+            // ⭐⭐⭐ v2.2 通用修复：确保 loadedApkClassLoader 指向【目标 App】。
+            //
+            //   实测：`loadedApk.getClassLoader()` 在沙箱里拿到的是**宿主**的
+            //   PathClassLoader（DexPathList 指向 com.yuntuoxiu.app/base.apk），
+            //   导致：① dump 出宿主 dex  ② Class.forName 找不到目标的壳 Application。
+            //
+            //   修复：用 PathClassLoader（**不校验可写目录**，DexClassLoader 会被
+            //   SecurityException 拒绝）加载沙箱安装的目标 APK。
+            //   —— 通用：对所有目标 App 都适用。
+            try {
+                File targetApk = BEnvironment.getBaseApkDir(packageName);
+                if (targetApk.isFile() && targetApk.length() > 0) {
+                    File appLibDir = BEnvironment.getAppLibDir(packageName);
+                    appLibDir.mkdirs();
+                    ClassLoader target = new dalvik.system.PathClassLoader(
+                            targetApk.getAbsolutePath(),
+                            appLibDir.getAbsolutePath(),
+                            ClassLoader.getSystemClassLoader());
+                    loadedApkClassLoader = target;
+                    BlackBoxCore.bbxLog("handleBindApplication: [通用] 目标 PathClassLoader 已建立: "
+                            + targetApk.getAbsolutePath() + " size=" + targetApk.length());
+                }
+            } catch (Throwable t) {
+                BlackBoxCore.bbxLog("handleBindApplication: [通用] PathClassLoader 失败: "
+                        + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+
             BlackBoxCore.get().getAppLifecycleCallback().beforeCreateApplication(packageName, processName, packageContext, loadedApk);
             if (Build.VERSION.SDK_INT>=34) {
                 if (!BEnvironment.EMPTY_JAR.setWritable(false)){
@@ -277,6 +304,58 @@ public class BActivityThread extends IBActivityThread.Stub {
                 }
             }
 
+            // ⭐⭐⭐ v2.2 方案X 关键修复：手动构造目标 Application 并执行 onCreate！
+            //
+            //   根因：A16 上 `LoadedApk.makeApplication` / `newApplication` 均失败 →
+            //        application=null → 壳的 Application.onCreate **从未执行** →
+            //        腾讯御安全的 SMZ 永不解密 → 内存里没有真实 dex。
+            //
+            //   修复：用「目标 ClassLoader + 目标类名」直接反射构造 Application，
+            //        注入 BaseContext，**显式调用 attachBaseContext + onCreate** ——
+            //        这会触发壳的初始化流程（SMZ 解密就在 onCreate 里）。
+            if (application == null) {
+                try {
+                    String appClassName = packageInfo.applicationInfo.className;
+                    if (appClassName == null || appClassName.isEmpty()) {
+                        // 未声明 Application → 用默认 android.app.Application
+                        appClassName = "android.app.Application";
+                    }
+                    BlackBoxCore.bbxLog("handleBindApplication: [方案X] 手动构造 Application: "
+                            + appClassName);
+                    ClassLoader cl = (loadedApkClassLoader != null)
+                            ? loadedApkClassLoader
+                            : packageContext.getClassLoader();
+                    Class<?> appClazz = Class.forName(appClassName, true, cl);
+                    Object appObj = appClazz.newInstance();
+                    if (appObj instanceof Application) {
+                        Application app = (Application) appObj;
+                        // 注入 Context（内部会调 attachBaseContext）
+                        try {
+                            Method attach = Application.class.getDeclaredMethod(
+                                    "attach", Context.class);
+                            attach.setAccessible(true);
+                            attach.invoke(app, packageContext);
+                        } catch (Throwable t1) {
+                            BlackBoxCore.bbxLog("handleBindApplication: [方案X] attach 失败: "
+                                    + t1.getMessage());
+                        }
+                        // ⭐ 关键：显式调用 onCreate → 触发壳（SMZ）解密
+                        try {
+                            BlackBoxCore.bbxLog("handleBindApplication: [方案X] 调用 onCreate（触发壳解密）...");
+                            app.onCreate();
+                            BlackBoxCore.bbxLog("handleBindApplication: [方案X] onCreate 完成");
+                        } catch (Throwable t2) {
+                            BlackBoxCore.bbxLog("handleBindApplication: [方案X] onCreate 异常(可忽略): "
+                                    + t2.getClass().getSimpleName() + ": " + t2.getMessage());
+                        }
+                        application = app;
+                    }
+                } catch (Throwable e) {
+                    BlackBoxCore.bbxLog("handleBindApplication: [方案X] 构造失败: "
+                            + e.getClass().getSimpleName() + ": " + e.getMessage());
+                }
+            }
+
             mInitialApplication = application;
             ActivityThread.mInitialApplication.set(BlackBoxCore.mainThread(), mInitialApplication);
             BlackBoxCore.bbxLog("handleBindApplication: application 构造完成 application=" +
@@ -288,14 +367,13 @@ public class BActivityThread extends IBActivityThread.Stub {
             //   正确语义：只要该进程属于目标包，就应执行 dump。
             //   （packageName 为包名；processName 可能是 "pkg" 或 "pkg:xxx"）
             if (isTargetProcess(packageName, processName)) {
-                // ⭐ v2.2：loader 解析。
-                //   实测：无论 loadedApkClassLoader 还是 application.getClassLoader()，
-                //   在沙箱里拿到的都是【宿主（云脱修）的 loader】 →
-                //   dump 出的是宿主的 dex（与目标无关）。
-                //   因此这里**传 null**，让 VMCore 走「直接从目标 APK 提取 cookies」的路径。
-                //   （目标 APK 的 classesN.dex 才是该 App 的 dex 集合）
-                ClassLoader loader = null;
-                BlackBoxCore.bbxLog("handleBindApplication: 进入 handleDumpDex, loader=null（走 APK 提取）");
+                // ⭐⭐⭐ v2.2 通用修复：传【目标 PathClassLoader】给 handleDumpDex。
+                //   · 若壳把解密 dex 注册进 loader → cookie dump 能直接拿到
+                //   · 否则 VMCore 内会回退到「从目标 APK 提取」+「多轮内存扫描」
+                //   （三者叠加，通用覆盖各类壳）
+                ClassLoader loader = loadedApkClassLoader;
+                BlackBoxCore.bbxLog("handleBindApplication: 进入 handleDumpDex, loader="
+                        + (loader == null ? "null" : "目标 PathClassLoader"));
                 sDumping = true;
                 handleDumpDex(packageName, result, loader);
             } else {
@@ -315,8 +393,19 @@ public class BActivityThread extends IBActivityThread.Stub {
 
     private void handleDumpDex(String packageName, DumpResult result, ClassLoader classLoader) {
         new Thread(() -> {
+            // ⭐⭐⭐ v2.2 关键修复：等待目标 App「壳初始化完成」再 dump！
+            //
+            //   时序分析（实测）：
+            //     · handleBindApplication 发生在 :p0 绑定 Application 时
+            //     · 此刻目标 App 的 Application.onCreate **还没执行**
+            //     · 腾讯御安全的 SMZ 解密**发生在壳 Application.onCreate 里**
+            //     · 因此过早 dump → 只能拿到宿主 dex（真实 dex 还没解密）
+            //
+            //   修复：先等 3 秒（让 launchApk 的 Activity 真正启动、壳跑 onCreate 解密），
+            //        再多轮扫描。若目标 App 未启动，也至少给壳充分的初始化时间。
             try {
-                Thread.sleep(500);
+                BlackBoxCore.bbxLog("handleDumpDex: 等待目标 App 壳初始化（6s）...");
+                Thread.sleep(6000);
             } catch (InterruptedException ie) {
                 Log.e(TAG, "handleDumpDex: ", ie);
             }

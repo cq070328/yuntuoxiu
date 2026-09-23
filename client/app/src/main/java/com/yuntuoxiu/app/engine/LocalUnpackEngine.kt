@@ -236,12 +236,18 @@ object LocalUnpackEngine {
             // ⭐ v2.0.1：沙箱启动较慢，等待时间延长到 180s，并每 10s 打印进度
             val dumpDir = File(getDumpDir(), result.packageName)
             val deadline = System.currentTimeMillis() + 180_000
+            // ⭐⭐⭐ v2.2 关键修复：深度脱壳必须「等到扫描真正结束」！
+            //   时序：handleDumpDex 先等 6s（壳初始化）→ memScanMultiRound 扫 6 轮×800ms≈5s
+            //   总计 ≈ 11s。原「稳定 3 次(4.5s)就 break」会在扫描前退出 → 拿不到 scan_*.dex。
+            //   因此深度模式下**强制最少等待 25s**。
+            val minWaitMs = if (deepUnpack) 25_000L else 6_000L
+            val minDeadline = System.currentTimeMillis() + minWaitMs
             var stable = 0
             var lastCount = -1
             var tick = 0
             while (System.currentTimeMillis() < deadline) {
                 val n = collectDex(dumpDir).size
-                if (n > 0 && n == lastCount) {
+                if (n > 0 && n == lastCount && System.currentTimeMillis() >= minDeadline) {
                     stable++
                     if (stable >= 3) break
                 } else stable = 0

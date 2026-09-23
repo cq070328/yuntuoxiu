@@ -70,19 +70,20 @@ public class VMCore {
     //public static native void hookBeforeSoLoad(String fakePath);
 
     public static void cookieDumpDex(ClassLoader classLoader, String packageName) {
+        // ⭐⭐⭐ v2.2 通用脱壳：三条路一起走，DexPostProcessor 去重择优。
+        //   ① loader 的 dexElements（cookie）→ 抽取壳 / 部分整体壳注册的 dex
+        //   ② 目标 APK 内 classes*.dex（>64KB）→ 未加壳 / 壳外置
+        //   ③ 多轮内存扫描（memScanMultiRound）→ VMP / 内存解密型
         List<Long> loaderCookies = DexFileCompat.getCookies(classLoader);
-        // ⭐ v2.2：若 loader 取不到 cookies（如 loader=宿主/目标加载失败），
-        //   则直接从沙箱安装的目标 APK 提取 dex 并【直接写出】（不经 native 内存读取）。
-        boolean apkWroteDex = false;
-        if (loaderCookies == null || loaderCookies.isEmpty()) {
-            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: loader cookies 为空，尝试从目标 APK 直接提取");
-            int before = DexFileCompat.countDexInDir(packageName);
-            loaderCookies = DexFileCompat.getCookiesFromApk(packageName);
-            int after = DexFileCompat.countDexInDir(packageName);
-            apkWroteDex = (after > before);
-            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 从 APK 提取完成, 新增 dex 文件=" + (after - before)
-                    + " cookies=" + (loaderCookies == null ? "null" : loaderCookies.size()));
-        }
+        BlackBoxCore.bbxLog("VMCore.cookieDumpDex: ① loader cookies="
+                + (loaderCookies == null ? "null" : loaderCookies.size()));
+
+        // ② 无论 loader 是否有 cookie，都提取 APK 内 dex（>64KB，跳过 stub）
+        int before = DexFileCompat.countDexInDir(packageName);
+        DexFileCompat.getCookiesFromApk(packageName);
+        int after = DexFileCompat.countDexInDir(packageName);
+        BlackBoxCore.bbxLog("VMCore.cookieDumpDex: ② 从 APK 提取 tar dex, 新增=" + (after - before));
+
         // ⭐ lambda 要求 effectively final → 用 final 别名
         final List<Long> cookies = (loaderCookies == null)
                 ? new ArrayList<Long>() : loaderCookies;
@@ -142,17 +143,13 @@ public class VMCore {
             }
         }
 
-        // ⭐⭐ v2.2：深度脱壳时，**总是**额外做「内存扫描」——
-        //   对 VMP 壳（腾讯御安全等），base.apk 里的 classesN.dex 只是壳 stub
-        //   （实测：classes.dex 仅 126KB + 3 个 2.4KB），真实代码加密在 assets。
-        //   解密后的完整 dex 必然在某段可读内存中 → 扫描 /proc/self/maps 找出来。
-        //
-        //   ⚠️ 修正 v2.2：即使已从 APK 写出 stub dex，**也必须**做内存扫描
-        //      （stub ≠ 真实代码）。两者叠加，DexPostProcessor 会保留 class 数多的。
+        // ③ ⭐⭐ v2.2：深度脱壳时，**总是**做「多轮内存扫描」——
+        //   对 VMP 壳（腾讯御安全等），真实 dex 由壳 so 运行时解密到内存，
+        //   既不在 base.apk 的 classes*.dex 里，也不在 loader 的 dexElements 里。
+        //   多轮扫描（6 轮 × 800ms）捕获各段解密瞬间。
         if (BlackBoxCore.get().isFixCodeItem()) {
             try {
-                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 深度模式 → 触发多轮内存扫描（SMZ 分段解密）");
-                // ⭐ 6 轮 × 800ms ≈ 覆盖 5 秒解密窗口（SMZ 逐段解密）
+                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: ③ 深度模式 → 触发多轮内存扫描");
                 memScanMultiRound(file.getAbsolutePath(), 6, 800);
             } catch (Throwable t) {
                 BlackBoxCore.bbxLog("VMCore.cookieDumpDex: memScanMultiRound 异常: " + t.getMessage());
