@@ -26,11 +26,27 @@ public class CopyExecutor implements Executor {
 
     @Override
     public int exec(BPackageSettings ps, InstallOption option, int userId) {
-        try {
-            NativeUtils.copyNativeLib(new File(ps.pkg.baseCodePath), BEnvironment.getAppLibDir(ps.pkg.packageName));
-        } catch (Exception e) {
-            e.printStackTrace();
+        // ⭐ v2.2 修复：先校验 baseCodePath 是否为有效文件。
+        //   原代码直接 NativeUtils.copyNativeLib(new File(ps.pkg.baseCodePath), ...)，
+        //   若 baseCodePath 为 null 或文件不存在会抛异常 → return -1 → 安装失败。
+        //   这里区分「致命」（FLAG_STORAGE 需要拷贝 APK）与「非致命」（仅 so 提取）。
+        String basePath = ps.pkg == null ? null : ps.pkg.baseCodePath;
+        if (basePath == null || basePath.isEmpty()) {
+            BlackBoxCore.bbxLog("CopyExecutor: baseCodePath 为空 → 无法定位 APK，安装失败");
             return -1;
+        }
+        File srcApk = new File(basePath);
+        if (!srcApk.isFile()) {
+            BlackBoxCore.bbxLog("CopyExecutor: baseCodePath 指向的文件不存在: " + basePath);
+            return -1;
+        }
+        try {
+            NativeUtils.copyNativeLib(srcApk, BEnvironment.getAppLibDir(ps.pkg.packageName));
+        } catch (Exception e) {
+            BlackBoxCore.bbxLog("CopyExecutor: copyNativeLib 异常: "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
+            e.printStackTrace();
+            // 不中断 —— so 提取失败不影响脱壳（运行时从宿主加载）
         }
 
         // ⭐ v2.0 修复：libblackdex*.so 的拷贝改为「尽力而为」。

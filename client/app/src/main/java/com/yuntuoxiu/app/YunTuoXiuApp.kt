@@ -57,16 +57,33 @@ class YunTuoXiuApp : Application() {
         const val START_CMD = "(v2.0 无需启动后端)"
 
         /**
-         * ⭐ v2.1 P0 修复：脱壳 dump 输出目录（引擎与 UI **必须**共用同一处）。
+         * ⭐ v2.2 P0 修复：脱壳 dump 输出目录改用 **App 内部存储**。
          *
-         * 历史问题：引擎 override 写到 `unpackcloud/dump`（Operit 工作区路径），
-         *   App 进程（u0_aXXX）对该路径 **无写权限**，dex 静默写失败 → 永远「未产出 DEX」。
+         * 历史问题（本次实测定位）：
+         *   v2.1 使用 `getExternalFilesDir()` → `/storage/emulated/0/Android/data/<pkg>/files/dexdump`。
+         *   但 dump 实际发生在 **`:p0` 虚拟进程**（目标 App 的沙箱进程）中，
+         *   该进程经 BlackBox 虚拟化后访问 **fuse 外部存储**  受限 →
+         *   `handleBindApplication` 日志显示 `exists=false canWrite=false`
+         *   → native `cookieDumpDex` 写盘失败 / 进程崩溃 → 「未产出 DEX」。
          *
-         * 现改为 App 私有外部目录：`/sdcard/Android/data/<pkg>/files/dexdump`
-         *   - 无需 MANAGE_EXTERNAL_STORAGE，App 天然可读写；
-         *   - 引擎、UI、LocalUnpackEngine 三方共用此常量，杜绝目录不一致。
+         * 现改为 App 内部存储：`/data/user/0/<pkg>/files/dexdump`
+         *   - `:p0` 与宿主同 Linux UID（u0_aXXX），内部存储**绝对可写**；
+         *   - 不经过 fuse / MediaProvider，无 SELinux 外部存储限制；
+         *   - 无需任何运行时权限。
+         *
+         * 兼容：仍保留外部路径作为**只读回退**（若内部目录创建失败）。
          */
         fun dexDumpRoot(): java.io.File {
+            // 首选内部存储（可写、无权限问题）
+            val internal = java.io.File(instance.filesDir, "dexdump")
+            try {
+                if (!internal.exists()) internal.mkdirs()
+                if (internal.isDirectory && internal.canWrite()) {
+                    return internal
+                }
+            } catch (_: Throwable) {
+            }
+            // 回退：外部私有目录（旧行为）
             val base = instance.getExternalFilesDir(null)
                 ?: java.io.File(instance.filesDir, "dexdump")
             val dir = java.io.File(base, "dexdump")
@@ -110,11 +127,12 @@ class YunTuoXiuApp : Application() {
         val cfg = object : top.niunaijun.blackbox.app.configuration.ClientConfiguration() {
             override fun getHostPackageName(): String = packageName
             override fun getDexDumpDir(): String {
-                // ⭐ v2.1 P0：与主进程/UI 统一使用 App 私有外部目录（见 dexDumpRoot）
+                // ⭐ v2.1 P0：与主进程/UI 统一使用 App 内部存储（见 dexDumpRoot）
                 return dexDumpRoot().absolutePath
             }
+            // ⭐ v2.2 P0：关闭 native Hook dump（A16 上 Dobby 解析崩溃，见主进程注释）
             override fun isFixCodeItem(): Boolean = false
-            override fun isEnableHookDump(): Boolean = true
+            override fun isEnableHookDump(): Boolean = false
             override fun isAutoCallMethod(): Boolean = true
             override fun isVerifyDex(): Boolean = true
         }
@@ -276,13 +294,20 @@ class YunTuoXiuApp : Application() {
                 override fun getHostPackageName(): String = packageName
 
                 override fun getDexDumpDir(): String {
-                    // ⭐ v2.1 P0：统一到 App 私有外部目录（引擎/UI/LocalUnpackEngine 共用）
+                    // ⭐ v2.1 P0：统一到 App 内部存储（引擎/UI/LocalUnpackEngine 共用）
                     return dexDumpRoot().absolutePath
                 }
 
                 // 默认开启 Hook dump + 主动调用（对抗抽取壳）；深度脱壳 A13+ 已失效，关闭
                 override fun isFixCodeItem(): Boolean = false
-                override fun isEnableHookDump(): Boolean = true
+
+                // ⭐ v2.2 P0 修复：关闭 native Hook dump。
+                //   实战 tombstone 显示 :p0 进程在
+                //     DexDump::hookDumpDex → DobbySymbolResolver → elf_ctx_init
+                //   处 SIGSEGV（Android 16 上 Dobby 解析 ELF 符号越界），
+                //   导致目标进程在 handleBindApplication 阶段崩溃 → 永远无 dump。
+                //   关闭后仅保留 Cookie dump + 主动调用（主路径，不依赖 native hook）。
+                override fun isEnableHookDump(): Boolean = false
                 override fun isAutoCallMethod(): Boolean = true
                 override fun isVerifyDex(): Boolean = true
             }

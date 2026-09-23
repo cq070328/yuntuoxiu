@@ -33,7 +33,8 @@ public abstract class ClientConfiguration {
     }
 
     public boolean isEnableHookDump() {
-        return true;
+        // ⭐ v2.2：默认关闭（Android 16 上 native hookDumpDex → Dobby 解析 SIGSEGV）
+        return false;
     }
 
     public boolean isAutoCallMethod(){return false;}

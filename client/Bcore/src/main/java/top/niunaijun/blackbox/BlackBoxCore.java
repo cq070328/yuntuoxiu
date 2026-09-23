@@ -323,7 +323,7 @@ public class BlackBoxCore extends ClientConfiguration {
             @Override
             public boolean isFixCodeItem() { return false; }
             @Override
-            public boolean isEnableHookDump() { return true; }
+            public boolean isEnableHookDump() { return false; } // ⭐ v2.2：A16 上 Dobby 崩溃，关闭
             @Override
             public boolean isAutoCallMethod() { return true; }
             @Override
