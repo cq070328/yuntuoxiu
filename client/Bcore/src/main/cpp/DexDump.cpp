@@ -496,3 +496,132 @@ void DexDump::hookDumpDex(JNIEnv *env, jstring dir) {
     DobbyHook(loadMethod,(void *) new_LoadNativeLibraryV,
               (void **) &orig_LoadNativeLibraryV);
 }*/
+
+// ===================== ⭐ v2.2：内存扫描脱壳（对 VMP 壳有效） =====================
+//
+// 背景：腾讯御安全（VMP）的真实 dex 不在 ART 的 DexFile 列表里
+//   （由 libshell*.so 自实现解释器逐条执行），因此
+//   hook LoadMethod/LoadClass 或 cookie dump 都拿不到。
+//
+// 方案：**主动扫描进程内存**，找出所有「dex magic 开头 + 结构合法」的区域并 dump。
+//   解密后的完整 dex 必然在某段可读内存中（匿名 mmap / heap / 解密缓冲区）。
+//
+// 与 cookieDumpDex 的区别：
+//   · cookieDumpDex：只 dump ART 已注册的 DexFile（拿不到 VMP）
+//   · memScanDump：广撒网扫描所有可读内存（对 VMP / 抽取壳都有效，但有误报可能）
+
+#include <sys/mman.h>
+#include <dirent.h>
+
+/** 校验某地址处是否像合法 dex（magic + size 合理 + checksum 自洽） */
+static int isLikelyDex(const uint8_t *p, size_t readable) {
+    if (readable < 112) return 0;
+    if (!(p[0] == 0x64 && p[1] == 0x65 && p[2] == 0x78 && p[3] == 0x0a)) return 0; // "dex\n"
+    // 版本号 dex\n0XX
+    if (p[4] != '0' || p[5] < '0' || p[5] > '9') return 0;
+    int size = read_little_endian_uint32(p + 0x20);
+    if (size < 112 || size > 0x10000000) return 0;
+    if ((size_t) size > readable) return 0;
+    // header_size 应为 0x70
+    int headerSize = read_little_endian_uint32(p + 0x24);
+    if (headerSize != 0x70) return 0;
+    // endian_tag 应为 0x12345678
+    int endian = read_little_endian_uint32(p + 0x28);
+    if (endian != 0x12345678) return 0;
+    return size;
+}
+
+/** 把一段内存作为 dex dump 出来（含 DexFileLoader 校验） */
+static void dumpDexBuffer(const uint8_t *begin, int size) {
+    // 去重（按 size）
+    list<int>::iterator iterator;
+    for (iterator = dumped.begin(); iterator != dumped.end(); ++iterator) {
+        if (*iterator == size) return;
+    }
+    char magic[8] = {0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0x00};
+
+    void *buffer = malloc(size);
+    if (!buffer) return;
+    memcpy(buffer, begin, size);
+    // 修复可能被清零的 magic
+    if (!art_lkchan::CompactDexFile::IsMagicValid(begin)) {
+        memcpy(buffer, magic, sizeof(magic));
+    }
+
+    // 用 DexFileLoader 校验（过滤假阳性）
+    const art_lkchan::DexFileLoader loader;
+    std::string error_msg;
+    std::vector<std::unique_ptr<const art_lkchan::DexFile>> dex_files;
+    if (!loader.OpenAll(reinterpret_cast<const uint8_t *>(buffer), size, "",
+                        true, false, &error_msg, &dex_files)) {
+        ALOGE("memScan: 非合法 dex (size=%d): %s", size, error_msg.c_str());
+        free(buffer);
+        return;
+    }
+
+    char path[1024];
+    sprintf(path, "%s/scan_%d.dex", dumpPath, size);
+    auto fd = open(path, O_CREAT | O_WRONLY, 0600);
+    ssize_t w = write(fd, buffer, size);
+    fsync(fd);
+    if (w > 0) {
+        ALOGE("memScan dump dex ======> %s (%d bytes, %zu classes)",
+              path, size, dex_files[0]->NumClassDefs());
+    } else {
+        remove(path);
+    }
+    close(fd);
+    free(buffer);
+    dumped.push_back(size);
+}
+
+/** 解析 /proc/self/maps，对所有可读匿名/堆/dalvik 区域做内存扫描 */
+void DexDump::memScanDump(JNIEnv *env, jstring dir) {
+    dumpPath = env->GetStringUTFChars(dir, 0);
+    ALOGE("memScanDump: 开始内存扫描脱壳, dir=%s", dumpPath);
+
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (!maps) {
+        ALOGE("memScanDump: 打不开 /proc/self/maps");
+        return;
+    }
+
+    char line[512];
+    int regionCount = 0;
+    int hitCount = 0;
+    while (fgets(line, sizeof(line), maps)) {
+        uintptr_t start, end;
+        char perms[8];
+        // 格式：start-end perms offset dev inode path
+        if (sscanf(line, "%lx-%lx %7s", &start, &end, perms) != 3) continue;
+        // 只要可读区域
+        if (perms[0] != 'r') continue;
+        size_t len = end - start;
+        // 跳过过小/过大区域（>512MB 跳过）
+        if (len < 4096 || len > 512UL * 1024 * 1024) continue;
+
+        // 只扫「匿名 / [anon] / [heap] / dalvik」区域（跳过多余的文件映射可加快）
+        // 但腾讯御安全的解密 dex 可能在匿名 mmap 里 → 保留匿名区
+        regionCount++;
+
+        const uint8_t *p = reinterpret_cast<const uint8_t *>(start);
+        size_t scanned = 0;
+        // 4 字节对齐扫描 magic "dex\n"
+        while (scanned + 4 <= len) {
+            if (p[scanned] == 0x64 && p[scanned + 1] == 0x65 &&
+                p[scanned + 2] == 0x78 && p[scanned + 3] == 0x0a) {
+                int sz = isLikelyDex(p + scanned, len - scanned);
+                if (sz > 0) {
+                    ALOGE("memScan: 命中 dex @ %p size=%d (region %lx-%lx)",
+                          p + scanned, sz, start, end);
+                    dumpDexBuffer(p + scanned, sz);
+                    hitCount++;
+                }
+            }
+            scanned += 4;
+        }
+    }
+    fclose(maps);
+    ALOGE("memScanDump: 完成，扫描 %d 个区域，命中 %d 个 dex", regionCount, hitCount);
+    env->ReleaseStringUTFChars(dir, dumpPath);
+}

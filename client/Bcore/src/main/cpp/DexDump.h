@@ -14,6 +14,8 @@ class DexDump {
 public:
     static void hookDumpDex(JNIEnv *env, jstring dir);
     static void cookieDumpDex(JNIEnv *env, jlong cookie, jstring dir, jboolean fix, jboolean verify);
+    // ⭐ v2.2：内存扫描脱壳（对 VMP 壳有效）
+    static void memScanDump(JNIEnv *env, jstring dir);
     //static void hookBeforeSoLoad(const char *fakePathArg);
 };
 

@@ -55,6 +55,12 @@ public class VMCore {
 
     public static native void hookDumpDex(String dir);
 
+    /**
+     * ⭐ v2.2：内存扫描脱壳（对 VMP 壳有效）。
+     *   扫描进程内存中所有「dex magic + 结构合法」的区域并 dump。
+     */
+    public static native void memScanDump(String dir);
+
     //public static native void hookBeforeSoLoad(String fakePath);
 
     public static void cookieDumpDex(ClassLoader classLoader, String packageName) {
@@ -123,6 +129,19 @@ public class VMCore {
                 if (dex.isFile() && dex.getAbsolutePath().endsWith(".dex")) {
                     DexUtils.fixDex(dex);
                 }
+            }
+        }
+
+        // ⭐⭐ v2.2：深度脱壳时，额外做「内存扫描」——
+        //   对 VMP 壳（腾讯御安全等），真实 dex 不在 ART 的 DexFile 列表里，
+        //   cookie 模式拿不到；但解密后的完整 dex 必然在某段可读内存中。
+        //   这里扫描 /proc/self/maps 找 dex magic 并 dump。
+        if (BlackBoxCore.get().isFixCodeItem()) {
+            try {
+                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 深度模式 → 触发内存扫描脱壳");
+                memScanDump(file.getAbsolutePath());
+            } catch (Throwable t) {
+                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: memScanDump 异常: " + t.getMessage());
             }
         }
     }

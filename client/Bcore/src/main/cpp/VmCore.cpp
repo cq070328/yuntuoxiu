@@ -187,6 +187,11 @@ void hookDumpDex(JNIEnv *env, jobject clazz, jstring dir) {
 
 }
 
+// ⭐ v2.2：内存扫描脱壳
+void memScanDump(JNIEnv *env, jobject clazz, jstring dir) {
+    DexDump::memScanDump(env, dir);
+}
+
 void cookieDumpDex(JNIEnv *env, jclass clazz, jlong cookie, jstring dir, jboolean fixCodeItem, jboolean verify) {
     DexDump::cookieDumpDex(env, cookie, dir, fixCodeItem, verify);
 }
@@ -201,6 +206,7 @@ static JNINativeMethod gMethods[] = {
         {"enableIO",        "()V",                                     (void *) enableIO},
         {"init",            "(I)V",                                    (void *) init},
         {"hookDumpDex",     "(Ljava/lang/String;)V",                   (void *) hookDumpDex},
+        {"memScanDump",     "(Ljava/lang/String;)V",                   (void *) memScanDump},
         {"cookieDumpDex",   "(JLjava/lang/String;ZZ)V",                 (void *) cookieDumpDex},
         /*{"hookBeforeSoLoad","(Ljava/lang/String;)V",                   (void *) hookBeforeSoLoad},*/
 };
