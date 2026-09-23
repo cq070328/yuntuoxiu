@@ -268,7 +268,9 @@ object LocalRepairEngine {
             zin.close()
 
             onProgress("重建完成: dex=$replacedDex(修复$repairedDex) 清壳=$removedShell 入口=$realAppResolved 大小=${totalOut / 1024}KB")
-            return Result(outApk, replacedDex, removedShell, totalOut, manifestChanged, realAppResolved)
+            // ⭐ v2.5：`realApp` 只在**真的改了 Manifest** 时返回，避免 UI 误报「入口已替换」。
+            return Result(outApk, replacedDex, removedShell, totalOut, manifestChanged,
+                    if (manifestChanged) realAppResolved else null)
         } catch (t: Throwable) {
             LogStore.e(TAG, "重建失败: ${t.javaClass.simpleName}: ${t.message}")
             onProgress("重建失败: ${t.javaClass.simpleName}: ${t.message}")

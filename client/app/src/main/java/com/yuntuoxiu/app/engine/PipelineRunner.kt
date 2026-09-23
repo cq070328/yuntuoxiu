@@ -111,9 +111,25 @@ object PipelineRunner {
         //   沙箱（BActivityThread）在构造目标 Application 后，会把真实入口类名写入
         //   原始 dump 目录的 entry.txt。这里先抓取，避免后续 dump_post/dump_fixed
         //   （入口不在这些目录）导致丢失。
+        //   ⭐ v2.5：兜底路径用**引擎 dump 目录**（dexes 为空时也能找到 entry.txt）。
+        val engineDumpDir = try {
+            File(LocalUnpackEngine.getDumpDir(), pkg ?: "")
+        } catch (_: Throwable) { dexDir }
         val runtimeEntry: String? = try {
-            val ef = File(dexes.firstOrNull()?.parentFile ?: dexDir, "entry.txt")
-            if (ef.isFile) ef.readText().trim().ifBlank { null } else null
+            val candidates = listOfNotNull(
+                dexes.firstOrNull()?.parentFile,
+                engineDumpDir,
+                dexDir,
+            )
+            var found: String? = null
+            for (d in candidates) {
+                val ef = File(d, "entry.txt")
+                if (ef.isFile) {
+                    val t = ef.readText().trim()
+                    if (t.isNotBlank()) { found = t; break }
+                }
+            }
+            found
         } catch (_: Throwable) { null }
         runtimeEntry?.let {
             onProgress(Progress(3, 7, "真实入口", "运行时解析到真实 Application: $it", true))

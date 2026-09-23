@@ -318,6 +318,8 @@ void fixCodeItem(JNIEnv *env, const art_lkchan::DexFile *dex_file_, size_t begin
     }
 }
 
+// ⭐ v2.5：`cookieDumpDex` 增加 beginOffset 有效性 + 读出数据 magic 校验，
+//   避免「校准错误 → 读出垃圾/宿主数据 → 写出错误 dex」。
 void DexDump::cookieDumpDex(JNIEnv *env, jlong cookie, jstring dir, jboolean fix, jboolean verify) {
     //没有执行初始化的话执行初始化
     if (beginOffset == -2) {
@@ -339,6 +341,18 @@ void DexDump::cookieDumpDex(JNIEnv *env, jlong cookie, jstring dir, jboolean fix
         return;
     }
     auto beginBytes = reinterpret_cast<const uint8_t *>(begin);
+    // ⭐ v2.5：无论 verify 是否开启，都先做一次「像不像 dex」的宽松校验，
+    //   防止 beginOffset 误校准导致后续按错误 size 读取（越界/垃圾）。
+    {
+        bool looksDex = (beginBytes[0] == 0x64 && beginBytes[1] == 0x65 &&
+                         beginBytes[2] == 0x78 && beginBytes[3] == 0x0a);
+        bool looksCdex = art_lkchan::CompactDexFile::IsMagicValid(beginBytes);
+        if (!looksDex && !looksCdex) {
+            ALOGE("cookieDumpDex: begin 处非 dex magic (beginOffset=%d)，"
+                  "疑似布局不匹配，跳过 cookie=%p", beginOffset, (void*)cookie);
+            return;
+        }
+    }
     //可选：校验dex magic，过滤掉非DexFile的cookie（如mCookie[0]的OatFile指针）。
     //部分加固会把内存中dex magic清零来对抗脱壳，此时可关闭该选项以dump出magic被破坏的dex。
     //同时放行CompactDex（cdex），否则从vdex编译加载的dex会被跳过。
@@ -564,11 +578,17 @@ static void dumpDexBuffer(const uint8_t *begin, int size, const char *outDir) {
         memcpy(buf, magic, sizeof(magic));
     }
     // endian_tag 位置 0x28
+    // ⭐ v2.5：仅在「明显是 SMZ 篡改」时修正，避免破坏正常 dex。
+    //   SMZ 特征：endian 高字节被改成非 78，但低 3 字节仍为 56 34 12 的变体。
     int endian = read_little_endian_uint32(buf + 0x28);
     if (endian != 0x12345678) {
-        // 若低 3 字节是 34 56 78（标准）→ 只修首字节
-        buf[0x28] = 0x78; buf[0x29] = 0x56; buf[0x2A] = 0x34; buf[0x2B] = 0x12;
-        ALOGE("dumpDexBuffer: endian_tag 0x%x → 0x12345678", endian);
+        // 仅当低 3 字节 == 0x563412（即 78 56 34 12 的尾部）→ 判定为篡改，修正首字节
+        if ((endian & 0x00FFFFFF) == 0x563412) {
+            buf[0x28] = 0x78; buf[0x29] = 0x56; buf[0x2A] = 0x34; buf[0x2B] = 0x12;
+            ALOGE("dumpDexBuffer: endian_tag 0x%x → 0x12345678（SMZ 特征）", endian);
+        } else {
+            ALOGE("dumpDexBuffer: endian_tag 0x%x 非 SMZ 特征，保持原样", endian);
+        }
     }
     // header_size 位置 0x24
     int headerSize = read_little_endian_uint32(buf + 0x24);
@@ -577,8 +597,9 @@ static void dumpDexBuffer(const uint8_t *begin, int size, const char *outDir) {
         ALOGE("dumpDexBuffer: header_size 0x%x → 0x70", headerSize);
     }
     // file_size 位置 0x20（用实际长度）
+    // ⭐ v2.5：仅当原 file_size 异常（<=0 或明显超出）时才用实际长度覆盖。
     int fileSize = read_little_endian_uint32(buf + 0x20);
-    if (fileSize != size) {
+    if (fileSize != size && (fileSize <= 0 || fileSize > size * 4)) {
         buf[0x20] = size & 0xFF;
         buf[0x21] = (size >> 8) & 0xFF;
         buf[0x22] = (size >> 16) & 0xFF;

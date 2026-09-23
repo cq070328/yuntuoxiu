@@ -69,17 +69,18 @@ object DexRepairEngine {
                 }
             }
 
-            // 2) checksum 重算（Adler-32，位于 header[8..12]）
-            //    计算范围：从 offset 12 到文件末尾
-            val adler = adler32(data, 12, data.size - 12)
-            val oldChecksum = readU4(data, 8)
-            if (oldChecksum != adler) {
-                writeU4(data, 8, adler)
-                fixedChecksum = true
-            }
+            // ⭐⭐⭐ v2.5【关键修复】计算/写入顺序必须是：先 SHA-1，后 checksum。
+            //   DEX 规范：
+            //     · checksum(Adler-32) 位于 header[8..12]，计算范围 [12, file_size)
+            //       —— 该范围**包含** SHA-1 字段（header[12..32]）！
+            //     · signature(SHA-1)  位于 header[12..32]，计算范围 [32, file_size)
+            //   原实现「先算 checksum 再改 SHA-1」→ SHA-1 一改，先前算出的 checksum 立即失效
+            //   → 加载时报 "checksum mismatch" / 校验失败。
+            //   现改为：① 先修 magic  ② 再算 SHA-1  ③ 最后算 checksum（覆盖正确值）。
 
-            // 3) SHA-1 重算（位于 header[12..32]）
-            //    计算范围：从 offset 32 到文件末尾
+            // 1) magic 修复（已在上方完成）
+
+            // 2) SHA-1 重算（位于 header[12..32]，范围 [32, file_size)）
             val sha1 = sha1(data, 32, data.size - 32)
             val curSha1 = data.copyOfRange(12, 32)
             if (!curSha1.contentEquals(sha1)) {
@@ -87,7 +88,31 @@ object DexRepairEngine {
                 fixedSha1 = true
             }
 
-            // 4) 校验 header_size / endian
+            // 3) ⭐ v2.5：file_size(header[0x20]) 修正（必须在 checksum 之前）。
+            //   内存 dump 的 dex 常被壳篡改 file_size（如 SMZ 写垃圾值），
+            //   若与真实长度不符，ART 加载会报 "file size mismatch"。
+            var fixedFileSize = false
+            run {
+                val fileSizeOff = 0x20
+                val declaredSize = readU4(data, fileSizeOff)
+                if (declaredSize != data.size.toLong() &&
+                    (declaredSize < 112 || declaredSize > data.size.toLong() * 4)) {
+                    writeU4(data, fileSizeOff, data.size.toLong())
+                    fixedFileSize = true
+                    LogStore.w(TAG, "file_size $declaredSize → ${data.size}（已修正）")
+                }
+            }
+
+            // 4) checksum 重算（位于 header[8..12]，范围 [12, file_size)）
+            //    ⚠️ 必须在 SHA-1 / file_size 修正**之后**计算，否则覆盖的是过期值。
+            val adler = adler32(data, 12, data.size - 12)
+            val oldChecksum = readU4(data, 8)
+            if (oldChecksum != adler) {
+                writeU4(data, 8, adler)
+                fixedChecksum = true
+            }
+
+            // 5) 校验 header_size / endian
             val headerSize = readU4(data, 36)
             val endianTag = readU4(data, 40)
             if (headerSize != 0x70L) {
@@ -106,7 +131,8 @@ object DexRepairEngine {
                 if (fixedMagic) append(" [magic修复]")
                 if (fixedChecksum) append(" [checksum重算]")
                 if (fixedSha1) append(" [sha1重算]")
-                if (!fixedMagic && !fixedChecksum && !fixedSha1) append(" [无需修复]")
+                if (fixedFileSize) append(" [file_size修正]")
+                if (!fixedMagic && !fixedChecksum && !fixedSha1 && !fixedFileSize) append(" [无需修复]")
             }
             LogStore.i(TAG, "DEX 修复: ${dexIn.name} → $detail")
             RepairResult(true, dexOut, fixedMagic, fixedChecksum, fixedSha1,

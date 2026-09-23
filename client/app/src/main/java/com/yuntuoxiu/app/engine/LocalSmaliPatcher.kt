@@ -34,7 +34,13 @@ object LocalSmaliPatcher {
         "com.qihoo.util.StubApp",
         "com.secneo.apkwrapper.ApplicationWrapper",
         "com.tencent.StubShell.TxAppEntry",
-    )
+        // ⭐ v2.5：补充常见壳入口（与 AxmEditor 关键词表对齐，用于文本回退替换）
+        "com.wrapper.proxyapplication.WrapperProxyApplication",
+        "MyWrapperProxyApplication",   // 腾讯御安全（包名不定，取类名特征）
+        "com.tencent.StubShell.TxAppEntry",
+        "com.stub.StubApplication",
+        "com.secneo.apkwrapper.ApplicationWrapper",
+    ).distinct()
 
     /** 壳 so 特征（清理） */
     private val SHELL_SO = listOf(

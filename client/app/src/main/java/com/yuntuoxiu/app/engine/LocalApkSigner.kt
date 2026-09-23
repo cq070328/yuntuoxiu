@@ -3,6 +3,7 @@ package com.yuntuoxiu.app.engine
 import android.content.Context
 import com.android.apksig.ApkSigner
 import com.yuntuoxiu.app.LogStore
+import com.yuntuoxiu.app.YunTuoXiuApp
 import java.io.File
 import java.io.FileInputStream
 import java.security.KeyFactory
@@ -53,35 +54,62 @@ object LocalApkSigner {
     ): SignResult {
         if (!inApk.isFile) return SignResult(false, null, "待签名 APK 不存在: ${inApk.absolutePath}")
 
-        // 1) 优先：内置 testkey.pk8 + .pem（AOSP，始终可用）
+        // ⭐⭐⭐ v2.5【关键修复】签名优先级调整：**JKS 优先，内置 testkey 兜底**。
+        //   原实现「testkey 优先」会导致：
+        //     · 运行时产物签名（AOSP testkey）与工程构建签名（ytx-release.jks / CN=YunTuoXiu）不一致
+        //     · 覆盖安装报 INSTALL_FAILED_UPDATE_INCOMPATIBLE
+        //   现改为：先尝试工作区固定 keystore（跨版本一致），失败再用内置 testkey。
+
+        // 1) 优先：工作区 JKS（固定签名，保证升级兼容）
+        val ks = keystore ?: locateDefaultKeystore()
+        if (ks != null && ks.isFile) {
+            val r = try {
+                onProgress("加载密钥库: ${ks.name}")
+                // ⭐ v2.5：keystore 可能是 PKCS12 或 JKS —— 自动探测（原先固定 JKS 会加载失败）。
+                val keyStore = loadKeyStoreAuto(ks, storePass)
+                    ?: return SignResult(false, null, "无法识别密钥库格式（JKS/PKCS12）: ${ks.name}")
+                val key = keyStore.getKey(keyAlias, keyPass.toCharArray()) as? PrivateKey
+                val certChain = keyStore.getCertificateChain(keyAlias)?.map { it as X509Certificate }
+                if (key == null || certChain == null) {
+                    SignResult(false, null, "密钥别名/证书链异常: $keyAlias")
+                } else {
+                    doSign(inApk, outApk, keyAlias, key, certChain, onProgress)
+                }
+            } catch (t: Throwable) {
+                LogStore.e(TAG, "签名失败(JKS): ${t.message}")
+                SignResult(false, null, "签名失败(JKS): ${t.message}")
+            }
+            if (r.ok) return r
+            onProgress("JKS 签名失败，回退内置 testkey: ${r.detail}")
+        }
+
+        // 2) 兜底：内置 testkey.pk8 + .pem（AOSP，始终可用）
         if (context != null) {
             val r = signWithBuiltinTestkey(inApk, outApk, context, onProgress)
             if (r != null && r.ok) return r
         }
 
-        // 2) 回退：工作区 JKS
-        val ks = keystore ?: locateDefaultKeystore()
-        if (ks == null || !ks.isFile) {
-            return SignResult(false, null,
-                "无可用签名密钥（内置 testkey 加载失败，且未找到 ytx-release.jks）")
+        return SignResult(false, null,
+            "无可用签名密钥（未找到 ytx-release.jks，且内置 testkey 加载失败）")
+    }
+
+    /**
+     * ⭐ v2.5：自动探测密钥库格式（PKCS12 优先尝试，再 JKS，再 BKS）。
+     *   实测工程 ytx-release.jks 实为 PKCS12 格式，固定 "JKS" 会抛
+     *   "Invalid keystore format"。
+     */
+    private fun loadKeyStoreAuto(file: File, storePass: String): KeyStore? {
+        for (type in arrayOf("PKCS12", "JKS", "BKS", "JCEKS")) {
+            try {
+                val k = KeyStore.getInstance(type)
+                FileInputStream(file).use { k.load(it, storePass.toCharArray()) }
+                LogStore.i(TAG, "密钥库格式探测成功: $type (${file.name})")
+                return k
+            } catch (_: Throwable) {
+                // 尝试下一种
+            }
         }
-
-        return try {
-            onProgress("加载密钥库: ${ks.name}")
-            val keyStore = KeyStore.getInstance("JKS")
-            FileInputStream(ks).use { keyStore.load(it, storePass.toCharArray()) }
-
-            val key = keyStore.getKey(keyAlias, keyPass.toCharArray()) as? PrivateKey
-                ?: return SignResult(false, null, "密钥别名不存在或非私钥: $keyAlias")
-            val certChain = keyStore.getCertificateChain(keyAlias)
-                ?.map { it as X509Certificate }
-                ?: return SignResult(false, null, "证书链为空: $keyAlias")
-
-            doSign(inApk, outApk, keyAlias, key, certChain, onProgress)
-        } catch (t: Throwable) {
-            LogStore.e(TAG, "签名失败(JKS): ${t.message}")
-            SignResult(false, null, "签名失败: ${t.message}")
-        }
+        return null
     }
 
     /**
@@ -141,13 +169,29 @@ object LocalApkSigner {
         return SignResult(true, outApk, "OK")
     }
 
-    /** 定位工作区 JKS */
+    /** 定位工作区 JKS（含 assets 兜底：把内置 keystore 解出到 filesDir） */
     fun locateDefaultKeystore(): File? {
         val candidates = listOf(
             File("/storage/emulated/0/MT2/apks/yuntuoxiu-dev/ytx-release.jks"),
             File("/storage/emulated/0/MT2/apks/yuntuoxiu-dev/src/ytx-release.jks"),
             File("/storage/emulated/0/MT2/apks/ytx-tools/ytx-release.jks"),
+            // ⭐ v2.5：运行时解出的 assets keystore（最可靠，不受外部存储权限影响）
+            File(YunTuoXiuApp.instance.filesDir, "ytx-release.jks"),
         )
-        return candidates.firstOrNull { it.isFile }
+        candidates.firstOrNull { it.isFile }?.let { return it }
+        // ⭐ v2.5：全部不存在 → 尝试从 assets 解出（保证任何环境都可用固定签名）
+        return try {
+            val dst = File(YunTuoXiuApp.instance.filesDir, "ytx-release.jks")
+            if (!dst.exists()) {
+                YunTuoXiuApp.instance.assets.open("ytx-release.jks").use { ins ->
+                    dst.outputStream().use { os -> ins.copyTo(os) }
+                }
+                LogStore.i(TAG, "已从 assets 解出 keystore → ${dst.absolutePath}")
+            }
+            if (dst.isFile) dst else null
+        } catch (t: Throwable) {
+            LogStore.w(TAG, "assets keystore 解出失败: ${t.message}")
+            null
+        }
     }
 }

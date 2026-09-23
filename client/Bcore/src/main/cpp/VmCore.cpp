@@ -129,8 +129,21 @@ jobject VmCore::redirectPathFile(JNIEnv *env, jobject path) {
 }
 
 jlongArray VmCore::loadEmptyDex(JNIEnv *env) {
+    // ⭐ v2.5：防御 —— VMCoreClass 可能尚未初始化（VmCore::init 未调用），
+    //   此时直接调用会 native crash（CallStaticObjectMethod(null,...)）。
+    if (VMEnv.VMCoreClass == nullptr || VMEnv.loadEmptyDex == nullptr) {
+        ALOGE("loadEmptyDex: VMEnv 未初始化（VmCore::init 未调用），返回空数组");
+        jlongArray empty = env->NewLongArray(0);
+        return empty;
+    }
     env = ensureEnvCreated();
-    return (jlongArray) env->CallStaticObjectMethod(VMEnv.VMCoreClass, VMEnv.loadEmptyDex);
+    jlongArray ret = (jlongArray) env->CallStaticObjectMethod(VMEnv.VMCoreClass, VMEnv.loadEmptyDex);
+    if (env->ExceptionCheck()) {
+        ALOGE("loadEmptyDex: Java 侧异常");
+        env->ExceptionClear();
+        return env->NewLongArray(0);
+    }
+    return ret;
 }
 
 int VmCore::getApiLevel() {

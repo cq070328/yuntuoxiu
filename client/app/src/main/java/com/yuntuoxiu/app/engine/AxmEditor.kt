@@ -75,19 +75,104 @@ object AxmEditor {
         if (!isBinaryAxm(data)) return null
 
         return try {
-            val out = rewriteStringPoolAndAttrs(data) { poolIndex, oldValue ->
-                // 回调：判断该字符串是否需要替换
+            // ⭐⭐⭐ v2.5【关键修复】：
+            //   原实现只替换「字符串值含 StubApp/qihoo/apkwrapper/TxAppEntry」的条目，
+            //   漏掉绝大多数壳（如腾讯御安全 `MyWrapperProxyApplication`、娜迦、
+            //   梆梆等）→ **真实入口替换失效**。
+            //   现改为：**精确定位 <application android:name="..."> 的字符串索引**，
+            //   无论其值是什么，一律替换为 newName。
+            val targetIdx = findApplicationNameStringIndex(data)
+            if (targetIdx >= 0) {
+                // 精确按 pool 索引替换（不依赖关键词）
+                val out = rewriteStringPoolAndAttrs(data) { idx, _ ->
+                    if (idx == targetIdx) newName else null
+                }
+                if (out !== data) return out
+            }
+            // 回退：仍按旧关键词匹配（兼容非标准 AXML / 解析失败场景）
+            val out2 = rewriteStringPoolAndAttrs(data) { _, oldValue ->
                 if (oldValue.contains("StubApp") ||
                     oldValue.contains("qihoo") ||
                     oldValue.contains("apkwrapper") ||
-                    oldValue.contains("TxAppEntry")) {
+                    oldValue.contains("TxAppEntry") ||
+                    oldValue.contains("WrapperProxyApplication") ||
+                    oldValue.contains("StubApplication") ||
+                    oldValue.contains("ProxyApplication")) {
                     newName
                 } else null
             }
-            out
+            out2
         } catch (t: Throwable) {
             null
         }
+    }
+
+    /**
+     * ⭐ v2.5：在 AXML 中定位 `<application android:name="X">` 的 X 对应的 string pool 索引。
+     *
+     * AXML 结构：
+     *   RES_XML_START_ELEMENT chunk：
+     *     header(8B) + node header(16B: lineNumber, comment)
+     *     + ns(u4) + name(u4) + attributeStart(u2) + attributeSize(u2) + attributeCount(u2)
+     *     + idIndex(u2) + classIndex(u2) + styleIndex(u2)
+     *     + [每个属性 20B：ns(u4) name(u4) rawValue(u4) typedValue(8B)]
+     *
+     * 判定：name 字符串 == "application"，且某属性的 name 字符串 == "name"，
+     *      取该属性的 rawValue（string pool 索引）。
+     *
+     * @return string pool 索引；找不到返回 -1
+     */
+    private fun findApplicationNameStringIndex(data: ByteArray): Int {
+        try {
+            val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+            val rootHeaderSize = bb.getShort(2).toInt() and 0xFFFF
+            var pos = rootHeaderSize
+            // 跳过 string pool
+            val spSize = bb.getInt(pos + 4)
+            pos += spSize
+            // 解析 string pool（取字符串用于比对）
+            val sp = parseStringPool(data, rootHeaderSize)
+            val strings = sp.strings
+            var appNodeFound = false
+            while (pos + 8 <= data.size) {
+                val type = bb.getShort(pos).toInt() and 0xFFFF
+                val headerSize = bb.getShort(pos + 2).toInt() and 0xFFFF
+                val size = bb.getInt(pos + 4)
+                if (size <= 0 || pos + size > data.size) break
+
+                if (type == RES_XML_START_ELEMENT_TYPE) {
+                    // node 数据区起点（跳过 8B chunk header 后的 node header 16B？）
+                    // ResXMLTree_node = header(8B: type/headerSize/size) + lineNumber(u4) + comment(u4)
+                    // → node header 共 8+8=16B，headerSize 通常=16
+                    val node = pos + headerSize            // 指向 ns 字段
+                    val nameIdx = bb.getInt(node + 4)      // ns(u4) + name(u4)
+                    val elemName = if (nameIdx in strings.indices) strings[nameIdx] else null
+                    if (elemName == "application") {
+                        appNodeFound = true
+                        // 紧随 name 之后：attributeStart(u2) attributeSize(u2) attributeCount(u2)
+                        val attrCount = bb.getShort(node + 12).toInt() and 0xFFFF
+                        val attrStart = bb.getShort(node + 8).toInt() and 0xFFFF
+                        val attrSize = bb.getShort(node + 10).toInt() and 0xFFFF
+                        val absAttrBase = node + attrStart
+                        for (a in 0 until attrCount) {
+                            val ap = absAttrBase + a * attrSize
+                            if (ap + 20 > data.size) break
+                            val aNameIdx = bb.getInt(ap + 4)
+                            val aRawIdx = bb.getInt(ap + 8)
+                            val aName = if (aNameIdx in strings.indices) strings[aNameIdx] else null
+                            if (aName == "name" && aRawIdx >= 0 && aRawIdx < strings.size) {
+                                return aRawIdx
+                            }
+                        }
+                    }
+                }
+                pos += size
+            }
+            if (!appNodeFound) return -1
+        } catch (t: Throwable) {
+            // 忽略，回退关键词匹配
+        }
+        return -1
     }
 
     /**

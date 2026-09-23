@@ -141,7 +141,12 @@ public class VMCore {
                 }
             }
             executorService.execute(() -> {
-                cookieDumpDex(cookie, file.getAbsolutePath(), BlackBoxCore.get().isFixCodeItem(), BlackBoxCore.get().isVerifyDex());
+                // ⭐⭐⭐ v2.5 修复：`fix` 参数强制 false。
+                //   原用 `BlackBoxCore.get().isFixCodeItem()`（= deepUnpack 开关），
+                //   开启深度脱壳时 fix=true → native `fixCodeItem()` 在 Android 13+
+                //   已被证实无效且可能 SIGSEGV（AOSP 从 A13 起移除 ArtMethod 的
+                //   dex_code_item_offset 语义）。真实方法体应由「内存扫描」路径获取。
+                cookieDumpDex(cookie, file.getAbsolutePath(), false, BlackBoxCore.get().isVerifyDex());
                 BlackBoxCore.getBDumpManager().noticeMonitor(result.dumpProcess(cookies.size(), atomicInteger.getAndIncrement()));
                 countDownLatch.countDown();
             });

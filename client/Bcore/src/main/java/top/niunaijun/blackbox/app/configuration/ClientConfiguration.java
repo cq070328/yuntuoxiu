@@ -33,11 +33,13 @@ public abstract class ClientConfiguration {
     }
 
     public boolean isEnableHookDump() {
-        // ⭐ v2.2：恢复 true。实际是否走 native hookDump 由「深度脱壳」开关
-        //   （BlackDexCore.isDeepUnpack）在 AppInstrumentation 中二次门控：
-        //   标准模式 deep=false → 不走 hookDump（避开 A16 Dobby 崩溃）
-        //   深度模式 deep=true  → 走 hookDump（尝试 dump CodeItem）
-        return true;
+        // ⭐ v2.5：默认 **false**。
+        //   历史：注释写「恢复 true」，但实测 A16 上
+        //     DexDump::hookDumpDex → DobbySymbolResolver → elf_ctx_init 会 SIGSEGV，
+        //   导致 :p0 在 handleBindApplication 阶段崩溃 → 永远无 dump。
+        //   且全部实际配置（YunTuoXiuApp 主/子进程）均已显式返回 false。
+        //   为避免「未覆盖该方法的配置误走 native hook」，此处默认改为 false。
+        return false;
     }
 
     public boolean isAutoCallMethod(){return false;}

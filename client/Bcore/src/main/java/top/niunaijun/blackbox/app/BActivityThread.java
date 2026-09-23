@@ -538,7 +538,9 @@ public class BActivityThread extends IBActivityThread.Stub {
                         if (names.length() > 0) names.append(",");
                         names.append(f.getName());
                         if (isHostLikeDex(f)) hostLike++;
-                        else if (countClasses(f) >= 300) real++;
+                        // ⭐ v2.5：阈值 300 → 500，与 DexPostProcessor.minClasses 对齐，
+                        //   避免「回执成功但后处理把该 dex 丢了」的不一致。
+                        else if (countClasses(f) >= 500) real++;
                     }
                     BlackBoxCore.bbxLog("handleDumpDex: 产出 " + dumped.length + " 个文件，"
                             + "疑似真实目标 dex=" + real + "，疑似宿主 dex=" + hostLike
