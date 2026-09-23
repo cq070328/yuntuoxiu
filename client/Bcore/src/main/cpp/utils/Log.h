@@ -1,3 +1,5 @@
+#ifndef YTX_LOG_H
+#define YTX_LOG_H
 #include <android/log.h>
 #include <cstdio>
 #include <cstdarg>
@@ -50,3 +52,5 @@ static inline void ytx_native_log(const char *fmt, ...) {
 #define SPEED_LOG_H 1
 
 #endif
+
+#endif // YTX_LOG_H
