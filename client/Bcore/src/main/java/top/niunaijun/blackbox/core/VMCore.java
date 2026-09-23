@@ -61,6 +61,12 @@ public class VMCore {
      */
     public static native void memScanDump(String dir);
 
+    /**
+     * ⭐ v2.2：多轮内存扫描（针对 SMZ/VMP 分段解密）。
+     *   逐段解密的壳，需在多个时间点扫描才能捕获所有段。
+     */
+    public static native void memScanMultiRound(String dir, int rounds, int intervalMs);
+
     //public static native void hookBeforeSoLoad(String fakePath);
 
     public static void cookieDumpDex(ClassLoader classLoader, String packageName) {
@@ -145,11 +151,11 @@ public class VMCore {
         //      （stub ≠ 真实代码）。两者叠加，DexPostProcessor 会保留 class 数多的。
         if (BlackBoxCore.get().isFixCodeItem()) {
             try {
-                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 深度模式 → 触发内存扫描脱壳"
-                        + (apkWroteDex ? "（已有 APK stub dex，仍扫描补充真实 dex）" : ""));
-                memScanDump(file.getAbsolutePath());
+                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 深度模式 → 触发多轮内存扫描（SMZ 分段解密）");
+                // ⭐ 6 轮 × 800ms ≈ 覆盖 5 秒解密窗口（SMZ 逐段解密）
+                memScanMultiRound(file.getAbsolutePath(), 6, 800);
             } catch (Throwable t) {
-                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: memScanDump 异常: " + t.getMessage());
+                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: memScanMultiRound 异常: " + t.getMessage());
             }
         }
     }

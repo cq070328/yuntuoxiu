@@ -688,3 +688,24 @@ void DexDump::memScanDump(JNIEnv *env, jstring dir) {
           regionCount, totalScanned, hitCount);
     env->ReleaseStringUTFChars(dir, dumpPath);
 }
+
+/**
+ * ⭐⭐ v2.2：多轮内存扫描（针对 SMZ/VMP 的「分段解密」）。
+ *
+ * 腾讯御安全（SMZ）把 4 段 dex 分别加密（0OO00l111l1l 内 4 个 dex magic），
+ * 运行时**逐段解密**。单次扫描只能捕获「当前已解密」的段。
+ * 因此这里**多轮扫描**（默认 6 轮，间隔 800ms），累计捕获所有段的解密瞬间。
+ *
+ * 对所有 dump 结果按 size 去重（dumpDexBuffer 内已做）。
+ */
+void DexDump::memScanMultiRound(JNIEnv *env, jstring dir, int rounds, int intervalMs) {
+    ALOGE("memScanMultiRound: 开始 %d 轮扫描，间隔 %d ms", rounds, intervalMs);
+    for (int i = 0; i < rounds; i++) {
+        ALOGE("memScanMultiRound: === 第 %d/%d 轮 ===", i + 1, rounds);
+        memScanDump(env, dir);
+        if (i < rounds - 1) {
+            usleep(intervalMs * 1000);
+        }
+    }
+    ALOGE("memScanMultiRound: 全部完成");
+}

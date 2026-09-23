@@ -16,6 +16,8 @@ public:
     static void cookieDumpDex(JNIEnv *env, jlong cookie, jstring dir, jboolean fix, jboolean verify);
     // ⭐ v2.2：内存扫描脱壳（对 VMP 壳有效）
     static void memScanDump(JNIEnv *env, jstring dir);
+    // ⭐ v2.2：多轮内存扫描（针对 SMZ 分段解密）
+    static void memScanMultiRound(JNIEnv *env, jstring dir, int rounds, int intervalMs);
     //static void hookBeforeSoLoad(const char *fakePathArg);
 };
 

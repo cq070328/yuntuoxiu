@@ -192,6 +192,11 @@ void memScanDump(JNIEnv *env, jobject clazz, jstring dir) {
     DexDump::memScanDump(env, dir);
 }
 
+// ⭐ v2.2：多轮内存扫描
+void memScanMultiRound(JNIEnv *env, jobject clazz, jstring dir, jint rounds, jint intervalMs) {
+    DexDump::memScanMultiRound(env, dir, rounds, intervalMs);
+}
+
 void cookieDumpDex(JNIEnv *env, jclass clazz, jlong cookie, jstring dir, jboolean fixCodeItem, jboolean verify) {
     DexDump::cookieDumpDex(env, cookie, dir, fixCodeItem, verify);
 }
@@ -207,6 +212,7 @@ static JNINativeMethod gMethods[] = {
         {"init",            "(I)V",                                    (void *) init},
         {"hookDumpDex",     "(Ljava/lang/String;)V",                   (void *) hookDumpDex},
         {"memScanDump",     "(Ljava/lang/String;)V",                   (void *) memScanDump},
+        {"memScanMultiRound","(Ljava/lang/String;II)V",                 (void *) memScanMultiRound},
         {"cookieDumpDex",   "(JLjava/lang/String;ZZ)V",                 (void *) cookieDumpDex},
         /*{"hookBeforeSoLoad","(Ljava/lang/String;)V",                   (void *) hookBeforeSoLoad},*/
 };
