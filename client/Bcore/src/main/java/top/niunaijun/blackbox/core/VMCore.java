@@ -136,22 +136,21 @@ public class VMCore {
             }
         }
 
-        // ⭐⭐ v2.2：深度脱壳时，额外做「内存扫描」——
-        //   对 VMP 壳（腾讯御安全等），真实 dex 不在 ART 的 DexFile 列表里，
-        //   cookie 模式拿不到；但解密后的完整 dex 必然在某段可读内存中。
-        //   这里扫描 /proc/self/maps 找 dex magic 并 dump。
+        // ⭐⭐ v2.2：深度脱壳时，**总是**额外做「内存扫描」——
+        //   对 VMP 壳（腾讯御安全等），base.apk 里的 classesN.dex 只是壳 stub
+        //   （实测：classes.dex 仅 126KB + 3 个 2.4KB），真实代码加密在 assets。
+        //   解密后的完整 dex 必然在某段可读内存中 → 扫描 /proc/self/maps 找出来。
         //
-        //   ⚠️ 若已从目标 APK 直接写出 dex（apkWroteDex），则不再扫描
-        //      （避免重复 + 全内存扫描耗时/崩溃风险）。
-        if (BlackBoxCore.get().isFixCodeItem() && !apkWroteDex) {
+        //   ⚠️ 修正 v2.2：即使已从 APK 写出 stub dex，**也必须**做内存扫描
+        //      （stub ≠ 真实代码）。两者叠加，DexPostProcessor 会保留 class 数多的。
+        if (BlackBoxCore.get().isFixCodeItem()) {
             try {
-                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 深度模式 → 触发内存扫描脱壳");
+                BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 深度模式 → 触发内存扫描脱壳"
+                        + (apkWroteDex ? "（已有 APK stub dex，仍扫描补充真实 dex）" : ""));
                 memScanDump(file.getAbsolutePath());
             } catch (Throwable t) {
                 BlackBoxCore.bbxLog("VMCore.cookieDumpDex: memScanDump 异常: " + t.getMessage());
             }
-        } else if (apkWroteDex) {
-            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 已从目标 APK 写出 dex，跳过内存扫描");
         }
     }
 

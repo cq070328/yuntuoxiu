@@ -586,22 +586,47 @@ void DexDump::memScanDump(JNIEnv *env, jstring dir) {
         return;
     }
 
+    // ⭐ v2.2：限制总扫描量，避免超时/卡死（最多扫 2GB）
+    static const size_t MAX_TOTAL_SCAN = 2UL * 1024 * 1024 * 1024;
+    size_t totalScanned = 0;
+
     char line[512];
     int regionCount = 0;
     int hitCount = 0;
     while (fgets(line, sizeof(line), maps)) {
         uintptr_t start, end;
         char perms[8];
+        char pathname[256] = {0};
         // 格式：start-end perms offset dev inode path
-        if (sscanf(line, "%lx-%lx %7s", &start, &end, perms) != 3) continue;
+        int matched = sscanf(line, "%lx-%lx %7s %*s %*s %*s %255s", &start, &end, perms, pathname);
+        if (matched < 3) continue;
         // 只要可读区域
         if (perms[0] != 'r') continue;
         size_t len = end - start;
         // 跳过过小/过大区域（>512MB 跳过）
         if (len < 4096 || len > 512UL * 1024 * 1024) continue;
 
-        // 只扫「匿名 / [anon] / [heap] / dalvik」区域（跳过多余的文件映射可加快）
-        // 但腾讯御安全的解密 dex 可能在匿名 mmap 里 → 保留匿名区
+        // ⭐ 跳过「云脱修自己的 APK/dev dex 映射」——避免扫到宿主 dex
+        //   （宿主 dex 在 /data/app/~~.../com.yuntuoxiu.app-.../base.apk 或
+        //    /data/user/0/com.yuntuoxiu.app/... 的 oat/vdex）
+        if (matched >= 4 && pathname[0] != '\0' && pathname[0] != '[') {
+            if (strstr(pathname, "com.yuntuoxiu.app") != nullptr) {
+                continue;
+            }
+        }
+        // 跳过 dev/oat/vdex 映射（它们不是我们要的"解密后 dex"）
+        if (matched >= 4 && pathname[0] != '\0' && pathname[0] != '[') {
+            if (strstr(pathname, ".oat") != nullptr || strstr(pathname, ".vdex") != nullptr ||
+                strstr(pathname, ".odex") != nullptr || strstr(pathname, ".art") != nullptr) {
+                continue;
+            }
+        }
+
+        if (totalScanned > MAX_TOTAL_SCAN) {
+            ALOGE("memScanDump: 已达总扫描上限，停止");
+            break;
+        }
+        totalScanned += len;
         regionCount++;
 
         const uint8_t *p = reinterpret_cast<const uint8_t *>(start);
@@ -622,6 +647,7 @@ void DexDump::memScanDump(JNIEnv *env, jstring dir) {
         }
     }
     fclose(maps);
-    ALOGE("memScanDump: 完成，扫描 %d 个区域，命中 %d 个 dex", regionCount, hitCount);
+    ALOGE("memScanDump: 完成，扫描 %d 个区域(%zu bytes)，命中 %d 个 dex",
+          regionCount, totalScanned, hitCount);
     env->ReleaseStringUTFChars(dir, dumpPath);
 }

@@ -66,6 +66,8 @@ object LocalRepairEngine {
         "tosversion", "t86", "t86_64",
         "0ooo00oo01l1l", "0ooo00oo11l1l", "dexmethod_00oo1l1l.dat".lowercase(),
         "vencache.dat", "sqlen_venus.dat",
+        // ⭐ 腾讯御安全版本水印（运行时创建，防误打包）
+        "free_version", "free_sversion",
     )
 
     /**
