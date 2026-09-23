@@ -244,7 +244,7 @@ public class BActivityThread extends IBActivityThread.Stub {
             ClassLoader targetLoader = null;
             try {
                 File targetApk = BEnvironment.getBaseApkDir(packageName);   // virtual/data/app/<pkg>/base.apk
-                if (targetApk.isFile && targetApk.length() > 0) {
+                if (targetApk.isFile() && targetApk.length() > 0) {
                     File appDataDir = BEnvironment.getDataDir(packageName, BActivityThread.getUserId());
                     File appLibDir = BEnvironment.getAppLibDir(packageName);
                     appDataDir.mkdirs();
