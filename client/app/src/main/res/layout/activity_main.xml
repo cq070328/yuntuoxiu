@@ -39,7 +39,6 @@
                 android:text="&#9776;"
                 android:textSize="26sp"
                 android:textColor="#E6EDF3"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="菜单" />
 
             <TextView
