@@ -39,6 +39,17 @@ object LocalUnpackEngine {
     var running = false
         private set
 
+    /** 本次脱壳开始时间（用于判断是否卡死） */
+    @Volatile
+    private var runningStartMs = 0L
+
+    private fun runningSince(): String =
+        if (runningStartMs <= 0) "?" else java.text.SimpleDateFormat(
+            "HH:mm:ss", java.util.Locale.US).format(java.util.Date(runningStartMs))
+
+    private fun runningElapsedSec(): Long =
+        if (runningStartMs <= 0) 0 else (System.currentTimeMillis() - runningStartMs) / 1000
+
     /**
      * 检查引擎是否可用。
      *
@@ -118,10 +129,12 @@ object LocalUnpackEngine {
     fun dumpInstalled(ctx: Context, packageName: String,
                       onProgress: (String) -> Unit = {}): List<File> {
         if (running) {
-            onProgress("已有脱壳任务在运行")
+            onProgress("已有脱壳任务在运行（开始于 ${runningSince()}，已 ${runningElapsedSec()}s）")
+            LogStore.w(TAG, "dumpInstalled 被拒: running=true since=${runningSince()}")
             return emptyList()
         }
         running = true
+        runningStartMs = System.currentTimeMillis()
         try {
             onProgress("启动本地脱壳引擎: $packageName")
             val core = top.niunaijun.blackbox.BlackDexCore.get()
@@ -167,14 +180,18 @@ object LocalUnpackEngine {
     fun dumpFile(ctx: Context, apkFile: File,
                  onProgress: (String) -> Unit = {}): List<File> {
         if (running) {
-            onProgress("已有脱壳任务在运行")
+            // ⭐ v2.2：明确记录被拒原因（runningSince 可判断是否卡死）
+            onProgress("已有脱壳任务在运行（开始于 ${runningSince()}，已 ${runningElapsedSec()}s）")
+            LogStore.w(TAG, "dumpFile 被拒: running=true, runningSince=${runningSince()}")
             return emptyList()
         }
         if (!apkFile.isFile) {
             onProgress("APK 不存在: ${apkFile.absolutePath}")
+            LogStore.w(TAG, "dumpFile 被拒: APK 不存在 ${apkFile.absolutePath}")
             return emptyList()
         }
         running = true
+        runningStartMs = System.currentTimeMillis()
         try {
             onProgress("启动本地脱壳引擎(文件): ${apkFile.name}")
             LogStore.i(TAG, "dumpFile: 开始, apk=${apkFile.absolutePath} size=${apkFile.length()}")

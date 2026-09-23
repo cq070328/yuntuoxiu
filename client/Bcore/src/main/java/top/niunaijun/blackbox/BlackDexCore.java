@@ -47,13 +47,25 @@ public class BlackDexCore {
     }
 
     public InstallResult dumpDex(String packageName) {
+        BlackBoxCore.bbxLog("dumpDex(String): 开始 installPackage(pkg) " + packageName);
         InstallResult installResult = BlackBoxCore.get().installPackage(packageName);
+        if (installResult == null) {
+            BlackBoxCore.bbxLog("dumpDex(String): installPackage 返回 null");
+            return null;
+        }
+        BlackBoxCore.bbxLog("dumpDex(String): install success=" + installResult.success
+                + " msg=" + installResult.msg + " pkg=" + installResult.packageName);
         if (installResult.success) {
             boolean b = BlackBoxCore.get().launchApk(packageName);
+            BlackBoxCore.bbxLog("dumpDex(String): launchApk 返回 " + b);
             if (!b) {
                 BlackBoxCore.get().uninstallPackage(installResult.packageName);
                 return null;
             }
+            // ⭐ v2.2：与 dumpDex(File) 一致，确认 :p 进程拉起
+            boolean alive = waitForTargetProcess(packageName, 15_000);
+            BlackBoxCore.bbxLog("dumpDex(String): 目标进程拉起确认 alive=" + alive
+                    + " pkg=" + packageName);
             return installResult;
         } else {
             return null;
