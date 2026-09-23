@@ -233,41 +233,6 @@ public class BActivityThread extends IBActivityThread.Stub {
                 Log.e(TAG, "handleBindApplication: ", e);
             }
 
-            // ⭐⭐ v2.2 关键修复：确保 ClassLoader 指向【目标 App】而非宿主。
-            //
-            //   实测问题：`loadedApkClassLoader` 取到的是 **宿主（云脱修）自己的**
-            //   PathClassLoader（其 DexPathList 指向 com.yuntuoxiu.app/base.apk），
-            //   导致 dump 出的是「云脱修 App 自己的 23 个 dex」，与目标 App 完全无关！
-            //
-            //   修复：用沙箱安装的目标 APK（virtual/data/app/<pkg>/base.apk）主动构造
-            //   DexClassLoader → 这才是目标 App 的真实 dex 集合。
-            ClassLoader targetLoader = null;
-            try {
-                File targetApk = BEnvironment.getBaseApkDir(packageName);   // virtual/data/app/<pkg>/base.apk
-                if (targetApk.isFile() && targetApk.length() > 0) {
-                    File appDataDir = BEnvironment.getDataDir(packageName, BActivityThread.getUserId());
-                    File appLibDir = BEnvironment.getAppLibDir(packageName);
-                    appDataDir.mkdirs();
-                    appLibDir.mkdirs();
-                    targetLoader = new dalvik.system.DexClassLoader(
-                            targetApk.getAbsolutePath(),
-                            appDataDir.getAbsolutePath(),
-                            appLibDir.getAbsolutePath(),
-                            ClassLoader.getSystemClassLoader()      // parent = boot
-                    );
-                    BlackBoxCore.bbxLog("handleBindApplication: 已构造目标 ClassLoader（目标 APK="
-                            + targetApk.getAbsolutePath() + " size=" + targetApk.length() + "）");
-                } else {
-                    BlackBoxCore.bbxLog("handleBindApplication: 目标 APK 不存在 " + targetApk.getAbsolutePath());
-                }
-            } catch (Throwable t) {
-                BlackBoxCore.bbxLog("handleBindApplication: 构造目标 ClassLoader 失败: "
-                        + t.getClass().getSimpleName() + ": " + t.getMessage());
-            }
-            // 目标 loader 优先；仅当构造失败时才回退宿主 loader
-            if (targetLoader != null) {
-                loadedApkClassLoader = targetLoader;
-            }
             BlackBoxCore.get().getAppLifecycleCallback().beforeCreateApplication(packageName, processName, packageContext, loadedApk);
             if (Build.VERSION.SDK_INT>=34) {
                 if (!BEnvironment.EMPTY_JAR.setWritable(false)){
@@ -323,22 +288,14 @@ public class BActivityThread extends IBActivityThread.Stub {
             //   正确语义：只要该进程属于目标包，就应执行 dump。
             //   （packageName 为包名；processName 可能是 "pkg" 或 "pkg:xxx"）
             if (isTargetProcess(packageName, processName)) {
-                // ⭐ v2.2 关键修复：loader 解析优先级。
-                //   实测（A16）：`application` 常为 null，且 `LoadedApk.getClassloader.call(loadedApk)`
-                //   在 A16 返回 null → loader=null → VMCore.cookieDumpDex(null,...) 取不到
-                //   任何 cookie → 0 个 dex。
-                //   而 loadedApkClassLoader 在第 223 行已通过反射成功取得，是**最可靠**的来源。
-                ClassLoader loader = loadedApkClassLoader;
-                if (loader == null && application != null) {
-                    loader = application.getClassLoader();
-                }
-                if (loader == null) {
-                    loader = LoadedApk.getClassloader.call(loadedApk);
-                }
-                if (loader == null) {
-                    loader = BlackBoxCore.getContext().getClassLoader();
-                }
-                BlackBoxCore.bbxLog("handleBindApplication: 进入 handleDumpDex, loader=" + loader);
+                // ⭐ v2.2：loader 解析。
+                //   实测：无论 loadedApkClassLoader 还是 application.getClassLoader()，
+                //   在沙箱里拿到的都是【宿主（云脱修）的 loader】 →
+                //   dump 出的是宿主的 dex（与目标无关）。
+                //   因此这里**传 null**，让 VMCore 走「直接从目标 APK 提取 cookies」的路径。
+                //   （目标 APK 的 classesN.dex 才是该 App 的 dex 集合）
+                ClassLoader loader = null;
+                BlackBoxCore.bbxLog("handleBindApplication: 进入 handleDumpDex, loader=null（走 APK 提取）");
                 sDumping = true;
                 handleDumpDex(packageName, result, loader);
             } else {

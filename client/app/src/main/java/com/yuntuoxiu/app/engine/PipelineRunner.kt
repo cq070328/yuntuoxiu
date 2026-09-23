@@ -152,16 +152,14 @@ object PipelineRunner {
                 val out = File(wd, "oneclick_replaced.apk")
                 val r = LocalRepairEngine.rebuild(
                     cur, LocalUnpackEngine.collectDex(useDir), out,
-                    // ⭐ v2.2：cleanShell 默认 false —— 对腾讯御安全等「整体壳」，
-                    //   壳 so 是 App 运行必需，删掉会导致装不上/跑不起来。
-                    //   （真正的清壳应由用户在确认不需要壳库时手动启用）
+                    // ⭐ v2.2：替换 dex 时**保留**壳 so/assets（脱壳阶段需要），
+                    //   真正的清壳在下一步 ⑤b 执行
                     cleanShell = false, repairDex = false
                 )
                 if (r != null && out.isFile) {
                     cur = out
                     onProgress(Progress(5, 7, "DEX替换",
-                        "替换 ${r.dexCount} 个 dex，清壳 ${r.removedShell}，入口=${r.realApp ?: "未变"}",
-                        true))
+                        "替换 ${r.dexCount} 个 dex，入口=${r.realApp ?: "未变"}", true))
                 } else {
                     onProgress(Progress(5, 7, "DEX替换", "替换失败，跳过", false))
                 }
@@ -170,6 +168,23 @@ object PipelineRunner {
             }
         } else {
             onProgress(Progress(5, 7, "DEX替换", "无 dex，跳过", true))
+        }
+
+        // ⑤b ⭐ v2.2：清壳（在 dex 替换【之后】执行）
+        //   顺序很重要：脱壳阶段必须保留完整壳（否则 App 跑不起来无法 dump）；
+        //   拿到真实 dex 并替换完后，才可安全清理壳文件（so + assets）。
+        onProgress(Progress(5, 7, "清壳清理", "清理壳 so/assets…", true))
+        runCatching {
+            val out = File(wd, "oneclick_decleaned.apk")
+            val n = ShellDetectBridge.cleanShell(cur, out)
+            if (out.isFile && out.length() > 1024) {
+                cur = out
+                onProgress(Progress(5, 7, "清壳清理", "已清理 $n 个壳条目", true))
+            } else {
+                onProgress(Progress(5, 7, "清壳清理", "无壳条目，跳过", true))
+            }
+        }.onFailure {
+            onProgress(Progress(5, 7, "清壳清理", "失败(跳过): ${it.message}", false))
         }
 
         // ⑥ 去除签名校验（正则类步骤，可选）

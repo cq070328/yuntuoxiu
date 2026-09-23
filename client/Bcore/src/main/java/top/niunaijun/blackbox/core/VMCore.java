@@ -59,6 +59,14 @@ public class VMCore {
 
     public static void cookieDumpDex(ClassLoader classLoader, String packageName) {
         List<Long> cookies = DexFileCompat.getCookies(classLoader);
+        // ⭐ v2.2：若 loader 取不到 cookies（如 loader=宿主/目标加载失败），
+        //   则直接从沙箱安装的目标 APK 提取 dex cookies。
+        if (cookies == null || cookies.isEmpty()) {
+            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: loader cookies 为空，尝试从目标 APK 直接提取");
+            cookies = DexFileCompat.getCookiesFromApk(packageName);
+            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 从 APK 提取 cookies="
+                    + (cookies == null ? "null" : cookies.size()));
+        }
         File baseFile = new File(BlackBoxCore.get().getDexDumpDir(), packageName);
         String subDir = BlackBoxCore.get().getDumpSubDir();
         File file = (subDir != null && !subDir.isEmpty()) ? new File(baseFile, subDir) : baseFile;
