@@ -66,12 +66,16 @@ public class VMCore {
     public static void cookieDumpDex(ClassLoader classLoader, String packageName) {
         List<Long> loaderCookies = DexFileCompat.getCookies(classLoader);
         // ⭐ v2.2：若 loader 取不到 cookies（如 loader=宿主/目标加载失败），
-        //   则直接从沙箱安装的目标 APK 提取 dex cookies。
+        //   则直接从沙箱安装的目标 APK 提取 dex 并【直接写出】（不经 native 内存读取）。
+        boolean apkWroteDex = false;
         if (loaderCookies == null || loaderCookies.isEmpty()) {
             BlackBoxCore.bbxLog("VMCore.cookieDumpDex: loader cookies 为空，尝试从目标 APK 直接提取");
+            int before = DexFileCompat.countDexInDir(packageName);
             loaderCookies = DexFileCompat.getCookiesFromApk(packageName);
-            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 从 APK 提取 cookies="
-                    + (loaderCookies == null ? "null" : loaderCookies.size()));
+            int after = DexFileCompat.countDexInDir(packageName);
+            apkWroteDex = (after > before);
+            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 从 APK 提取完成, 新增 dex 文件=" + (after - before)
+                    + " cookies=" + (loaderCookies == null ? "null" : loaderCookies.size()));
         }
         // ⭐ lambda 要求 effectively final → 用 final 别名
         final List<Long> cookies = (loaderCookies == null)
@@ -136,13 +140,18 @@ public class VMCore {
         //   对 VMP 壳（腾讯御安全等），真实 dex 不在 ART 的 DexFile 列表里，
         //   cookie 模式拿不到；但解密后的完整 dex 必然在某段可读内存中。
         //   这里扫描 /proc/self/maps 找 dex magic 并 dump。
-        if (BlackBoxCore.get().isFixCodeItem()) {
+        //
+        //   ⚠️ 若已从目标 APK 直接写出 dex（apkWroteDex），则不再扫描
+        //      （避免重复 + 全内存扫描耗时/崩溃风险）。
+        if (BlackBoxCore.get().isFixCodeItem() && !apkWroteDex) {
             try {
                 BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 深度模式 → 触发内存扫描脱壳");
                 memScanDump(file.getAbsolutePath());
             } catch (Throwable t) {
                 BlackBoxCore.bbxLog("VMCore.cookieDumpDex: memScanDump 异常: " + t.getMessage());
             }
+        } else if (apkWroteDex) {
+            BlackBoxCore.bbxLog("VMCore.cookieDumpDex: 已从目标 APK 写出 dex，跳过内存扫描");
         }
     }
 

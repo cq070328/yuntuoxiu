@@ -103,13 +103,29 @@ public class DexFileCompat {
         try {
             // 沙箱安装的目标 APK：virtual/data/app/<pkg>/base.apk
             java.io.File apk = top.niunaijun.blackbox.core.env.BEnvironment.getBaseApkDir(packageName);
-            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: apk=" + apk
-                    + " exists=" + (apk != null && apk.isFile()));
             if (apk == null || !apk.isFile()) {
                 return cookies;
             }
+            BlackBoxCore.bbxLog("getCookiesFromApk: apk=" + apk);
 
-            // 读取 APK 内所有 classesN.dex 的字节
+            // ⭐⭐ v2.2 关键修复：直接把 APK 里的 dex 字节【写到 dump 目录】，
+            //   而不是返回 cookies 让 native 从内存读。
+            //   原因：InMemoryDexClassLoader 的 mCookie 结构与普通 DexFile 不同，
+            //   用 cookieDumpDex 的 beginOffset 读到的是错误地址（实测 dump 出宿主 dex）。
+            //   —— 直接写文件最可靠。
+            java.io.File dumpDir = new java.io.File(BlackBoxCore.get().getDexDumpDir(), packageName);
+            dumpDir.mkdirs();
+            // ⭐⭐ 先清空目录，避免上一次的残留（cookie_*.dex 宿主 dex）混入
+            try {
+                java.io.File[] olds = dumpDir.listFiles();
+                if (olds != null) {
+                    for (java.io.File f : olds) {
+                        if (f.isFile() && f.getName().endsWith(".dex")) f.delete();
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+
             java.util.zip.ZipFile zf = new java.util.zip.ZipFile(apk);
             java.util.List<String> dexNames = new ArrayList<>();
             java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
@@ -118,43 +134,59 @@ public class DexFileCompat {
                 if (e.getName().matches("^classes\\d*\\.dex$")) dexNames.add(e.getName());
             }
             java.util.Collections.sort(dexNames);
-            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: dex entries=" + dexNames);
+            BlackBoxCore.bbxLog("getCookiesFromApk: dex entries=" + dexNames);
 
-            java.util.List<byte[]> dexBytes = new ArrayList<>();
+            int written = 0;
             for (String dn : dexNames) {
+                byte[] data;
                 java.io.InputStream in = zf.getInputStream(zf.getEntry(dn));
                 java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
                 in.close();
-                dexBytes.add(bos.toByteArray());
+                data = bos.toByteArray();
+
+                // 直接写 dump 文件（命名 target_<size>.dex，便于与宿主 cookie_* 区分）
+                java.io.File out = new java.io.File(dumpDir, "target_" + dn);
+                java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+                fos.write(data);
+                fos.flush();
+                fos.close();
+                written++;
+                BlackBoxCore.bbxLog("getCookiesFromApk: 已写出 " + out.getAbsolutePath()
+                        + " (" + data.length + " bytes)");
             }
             zf.close();
-            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: 读出 " + dexBytes.size() + " 个 dex 字节");
-
-            // ⭐⭐ A16 关键：不能用 `new DexFile(File)`（API 26+ 已废弃/受限）。
-            //   改用 InMemoryDexClassLoader（API 26+ 支持），从内存字节构造，
-            //   再反射取它的 DexPathList → Element[] → dexFile → mCookie。
-            java.nio.ByteBuffer[] bufs = new java.nio.ByteBuffer[dexBytes.size()];
-            for (int i = 0; i < dexBytes.size(); i++) {
-                bufs[i] = java.nio.ByteBuffer.wrap(dexBytes.get(i));
-            }
-            dalvik.system.InMemoryDexClassLoader imcl =
-                    new dalvik.system.InMemoryDexClassLoader(bufs, null);
-            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: 已构造 InMemoryDexClassLoader");
-
-            // 从 InMemoryDexClassLoader 的 DexPathList 取 cookies
-            cookies = getCookies(imcl);
-            top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk: 从 InMemoryDexClassLoader 取 cookies="
-                    + cookies.size());
+            BlackBoxCore.bbxLog("getCookiesFromApk: 共写出 " + written + " 个目标 dex");
+            // 返回空 cookies（不再走 native 内存读取路径）
+            return cookies;
         } catch (Throwable t) {
-            // ⭐ 同时写文件日志（logcat + bbxLog），便于定位
             top.niunaijun.blackbox.BlackBoxCore.bbxLog("getCookiesFromApk 失败: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
             android.util.Log.e(TAG, "getCookiesFromApk 失败", t);
         }
         return cookies;
+    }
+
+    /**
+     * ⭐ v2.2：统计某包 dump 目录下的 dex 文件数（用于判断是否已写出目标 dex）。
+     */
+    public static int countDexInDir(String packageName) {
+        try {
+            java.io.File dir = new java.io.File(
+                    top.niunaijun.blackbox.BlackBoxCore.get().getDexDumpDir(), packageName);
+            if (!dir.isDirectory()) return 0;
+            java.io.File[] fs = dir.listFiles();
+            if (fs == null) return 0;
+            int n = 0;
+            for (java.io.File f : fs) {
+                if (f.isFile() && f.getName().endsWith(".dex") && f.length() > 0) n++;
+            }
+            return n;
+        } catch (Throwable t) {
+            return 0;
+        }
     }
 
     private static List<DexFile> getDexFiles(ClassLoader classLoader) {
